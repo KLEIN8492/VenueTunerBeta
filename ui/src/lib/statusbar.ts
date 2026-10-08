@@ -25,6 +25,7 @@ export function mountStatusBar(el: HTMLElement, engine: Engine): void {
       s.faultMuted ? `<span class="bad">OUTPUTS MUTED</span>` : '',
       s.muteAll ? `<span class="bad">MUTE ALL</span>` : '',
       s.error ? `<span class="bad">${esc(s.error)}</span>` : '',
+      missingPatch(engine, s),
     ].join('');
   };
   engine.on('status', render);
@@ -34,3 +35,15 @@ export function mountStatusBar(el: HTMLElement, engine: Engine): void {
 
 export const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+// Inputs/outputs patched to channels the current interface doesn't have (e.g. after
+// switching interface): they are silent until re-patched in Settings.
+function missingPatch(engine: Engine, s: { numIn: number; numOut: number; running: boolean }): string {
+  const st = engine.state;
+  if (!st || !s.running) return '';
+  const outs = st.outputs.filter((o) => o.channel >= s.numOut).length;
+  const ins = st.sources.filter((x) => x.channel >= s.numIn).length;
+  if (!outs && !ins) return '';
+  const parts = [outs ? `${outs} output${outs > 1 ? 's' : ''}` : '', ins ? `${ins} input${ins > 1 ? 's' : ''}` : ''].filter(Boolean);
+  return `<span class="warn" title="Re-patch them in Settings › Inputs / Outputs">${parts.join(' + ')} on channels this interface doesn't have</span>`;
+}

@@ -2,6 +2,7 @@
 //   Measurement ⌘1 · Live/Tuning ⌘2 · Settings ⌘,
 const { app, BrowserWindow, Menu, dialog, net, protocol, screen, systemPreferences } = require('electron');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const nodeNet = require('node:net');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -76,7 +77,23 @@ const PAGES = {
   settings: { title: 'VenueTuner · Settings', w: 900, h: 760 },
 };
 
+// Window positions are remembered per window, if that place is still on a connected screen.
+const boundsFile = () => path.join(app.getPath('userData'), 'windows.json');
+let savedBounds = {};
+try { savedBounds = JSON.parse(fs.readFileSync(boundsFile(), 'utf8')); } catch { savedBounds = {}; }
+function onScreen(b) {
+  return b && screen.getAllDisplays().some(({ workArea: a }) =>
+    b.x < a.x + a.width - 50 && b.x + b.width > a.x + 50 && b.y >= a.y - 10 && b.y < a.y + a.height - 50);
+}
+let saveTimer = null;
+function rememberBounds(name, win) {
+  savedBounds[name] = win.getBounds();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { fs.writeFileSync(boundsFile(), JSON.stringify(savedBounds)); } catch { /* not critical */ } }, 500);
+}
+
 function openWindow(name, bounds) {
+  if (onScreen(savedBounds[name])) bounds = savedBounds[name];
   if (windows[name] && !windows[name].isDestroyed()) {
     windows[name].show();
     windows[name].focus();
@@ -92,6 +109,8 @@ function openWindow(name, bounds) {
   });
   win.loadURL(`app://ui/${name}.html?port=${PORT}`);
   win.on('page-title-updated', (e) => e.preventDefault());
+  win.on('moved', () => rememberBounds(name, win));
+  win.on('resized', () => rememberBounds(name, win));
   win.on('closed', () => { delete windows[name]; });
   windows[name] = win;
   return win;

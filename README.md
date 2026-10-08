@@ -65,6 +65,19 @@ made on another interface asks you to remap each input/output to the current cha
 
 Data (autosave, snapshots) lives in `~/Library/Application Support/VenueTuner`.
 
+## Editing
+
+- **Undo / redo** (⌘Z / ⇧⌘Z, or ↶ ↷ in the Live toolbar): every tuning and patch change, shared
+  by all windows, up to 100 steps; a drag counts as one step. Generator and measurement settings
+  are not part of the history. In a text field ⌘Z undoes the typing.
+- Windows reopen where you left them.
+
+## Performance
+
+16 outputs, each with 16 PEQ bands + LR24 HP + LR48 LP + 4 all-pass (28 IIR sections), at
+48 kHz / 64 samples: about **4 % of one Apple Silicon core** (≈ 0.25 % per fully loaded output).
+`engine/build/vt_tests "[.bench]"` runs the benchmark.
+
 ## Safety rules built in
 
 - Outputs muted on start-up, device change/disconnect and engine restart until you unmute.
@@ -72,4 +85,6 @@ Data (autosave, snapshots) lives in `~/Library/Application Support/VenueTuner`.
   and it fades in/out over 500 ms.
 - Gain changes ramp over 20 ms, delay changes crossfade over 50 ms (no clicks).
 - Per-output peak limiter (default −1 dBFS, zero latency).
+- FIR on/off crossfades (30 ms); patch edits never move another output's processing state.
+- Denormals are flushed on the audio thread (no CPU spikes on silence on Intel machines).
 - If the UI crashes or closes, the engine keeps passing audio.
