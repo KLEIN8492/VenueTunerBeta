@@ -16,6 +16,14 @@ describe('decodeBinary', () => {
     expect(Array.from(d.phase)).toEqual([0, 45]);
     expect(d.coh[1]).toBe(1);
   });
+  it('decodes an RTA frame', () => {
+    const d = decodeBinary(new Float32Array([3, 2, 134, 1, 100, 1000, -40, -38]).buffer);
+    expect(d.type).toBe('rta');
+    if (d.type !== 'rta') return;
+    expect(d.offsetDb).toBe(134);
+    expect(d.calibrated).toBe(true);
+    expect(Array.from(d.levelDb)).toEqual([-40, -38]);
+  });
   it('decodes an IR frame', () => {
     const f = new Float32Array([2, 3, 48000, 100, 50, 0.1, 1, 0.2]);
     const d = decodeBinary(f.buffer);

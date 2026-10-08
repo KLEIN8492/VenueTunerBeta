@@ -355,6 +355,9 @@ juce::var toVar(const SystemState& s)
     auto lat = obj();
     for (auto& [k, v] : s.cal.ioLatency) lat.getDynamicObject()->setProperty(k, v);
     c.getDynamicObject()->setProperty("ioLatency", lat);
+    auto spl = obj();
+    for (auto& [k, v] : s.cal.splOffset) spl.getDynamicObject()->setProperty(k, v);
+    c.getDynamicObject()->setProperty("splOffset", spl);
     c.getDynamicObject()->setProperty("micCalPath", s.cal.micCalPath);
     r->setProperty("cal", c);
     return root;
@@ -410,6 +413,11 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
             for (auto& p : lat->getProperties()) {
                 if (!(p.value.isDouble() || p.value.isInt())) { err = "cal/ioLatency: expected numbers"; return false; }
                 s.cal.ioLatency[p.name.toString()] = double(p.value);
+            }
+        if (auto* spl = c["splOffset"].getDynamicObject())
+            for (auto& p : spl->getProperties()) {
+                if (!(p.value.isDouble() || p.value.isInt())) { err = "cal/splOffset: expected numbers"; return false; }
+                s.cal.splOffset[p.name.toString()] = double(p.value);
             }
     }
     // Cross-checks: mix rows match the source list; references exist; one output per channel.

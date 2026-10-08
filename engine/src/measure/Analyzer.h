@@ -1,5 +1,8 @@
 #pragma once
 #include "measure/MicCal.h"
+#include "measure/RoomDecay.h"
+#include "measure/Rta.h"
+#include "measure/SplMeter.h"
 #include "rt/SpscFifo.h"
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
@@ -28,6 +31,7 @@ public:
         bool delayValid = false;
         float sampleRate = 48000.0f;
         int frames = 0;                                       // averaged frames so far
+        std::vector<DecayBand> decay;                         // sweep only: octave-band RT60
     };
 
     Analyzer();
@@ -57,6 +61,10 @@ public:
     int sweepGeneration() const { return sweepGen.load(); }
     Result sweepResult() const { std::lock_guard<std::mutex> l(resultLock); return sweep; }
     double delaySamples() const { return delayTotal.load(); }
+
+    // Fed with the same mic samples on the analysis thread; independent of the TF reset.
+    SplMeter& spl() { return splMeter; }
+    Rta& rta() { return rtaMeter; }
 
     static constexpr int kFixedOrder = 14;             // fixed mode: 16384 points
     static constexpr int kDelayOrder = 16;             // delay finder block: 65536
@@ -108,6 +116,8 @@ private:
     MicCal cal;
     mutable std::mutex resultLock;
     Result latest, sweep;
+    SplMeter splMeter;
+    Rta rtaMeter;
     std::atomic<int64_t> sweepRequest { 0 };
     std::atomic<int> sweepGen { 0 };
 };

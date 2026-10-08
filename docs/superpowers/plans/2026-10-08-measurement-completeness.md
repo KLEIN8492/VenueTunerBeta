@@ -20,18 +20,18 @@
 ---
 
 ### Task 1: SplMeter (engine) — weighting filters, Fast/Slow, Leq, peak
-- [ ] Tests: 1 kHz sine at −20 dBFS RMS → Z/A/C read −20 ±0.1 dBFS; 100 Hz sine → A reads −19.1 ±0.5 dB relative to Z, C −0.3 ±0.3; Leq of 1 s at −20 + 1 s at −40 ≈ −23.0; peak of a 0.5 sine = −6.02 dBFS.
+- [x] Tests: 1 kHz sine at −20 dBFS RMS → Z/A/C read −20 ±0.1 dBFS; 100 Hz sine → A reads −19.1 ±0.5 dB relative to Z, C −0.3 ±0.3; Leq of 1 s at −20 + 1 s at −40 ≈ −23.0; peak of a 0.5 sine = −6.02 dBFS.
 
 ### Task 2: Rta (engine)
-- [ ] Tests: pink noise → 1/3-oct bands equal within ±1 dB (63 Hz–10 kHz); 1 kHz sine → the 1 kHz band dominates by > 30 dB.
+- [x] Tests: pink noise → 1/3-oct bands equal within ±1 dB (63 Hz–10 kHz); 1 kHz sine → the 1 kHz band dominates by > 30 dB.
 
 ### Task 3: RoomDecay (engine) from the sweep IR
-- [ ] Tests: synthetic IR = exponentially decaying noise with RT60 = 0.8 s (+ noise floor at −70 dB) → T20 and T30 within 5 % in the 250 Hz–4 kHz bands.
+- [x] Tests: synthetic IR = exponentially decaying noise with RT60 = 0.8 s (+ noise floor at −70 dB) → T20 and T30 within 5 % in the 250 Hz–4 kHz bands.
 
 ### Task 4: Server / dispatcher
 - Status gets `spl {z, a, c fast/slow, leq, peak, weighting, calibrated}`; binary RTA frames (type 3); `spl.calibrate {level}`, `spl.resetLeq`, `rta.setResolution`; the sweep event carries `decay` (RT60 table + Schroeder curves).
-- [ ] Dispatcher test: calibration stores the offset under the mic source name.
+- [x] Dispatcher test: calibration stores the offset under the mic source name.
 
 ### Task 5: UI
 - TF/RTA switch on the magnitude plot; SPL panel (big value, weighting, Fast/Slow, Leq reset, calibrate); SPL readout in the Live toolbar; Room tab (RT60 table + decay plot); trace import (REW / Smaart text) with parser tests.
-- [ ] Build; BlackHole end-to-end: −20 dBFS pink → SPL and RTA read sensibly; sweep returns a decay table.
+- [x] Build; BlackHole end-to-end: −20 dBFS pink → SPL and RTA read sensibly; sweep returns a decay table.

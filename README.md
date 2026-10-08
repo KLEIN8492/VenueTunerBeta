@@ -51,7 +51,13 @@ npm test          # engine (Catch2) + UI (Vitest) tests
      narrow dips and low-coherence regions left alone). A "Before auto-EQ" snapshot is saved.
    - **Align**: capture the top alone and the sub alone from the same position; Compute finds the
      delay and polarity that sum best around the crossover (using phase). Apply sets them.
-5. **Interface latency**: the driver-reported value is used automatically. For precision,
+5. **Sound level, RTA, room** (Measurement window):
+   - **Sound level**: LAS/LCF/LZ… with Leq and peak. Calibrate once per mic with a calibrator
+     (94 dB default); the reading is also shown in the Live window toolbar.
+   - **View → RTA**: real-time 1/3 or 1/6-octave spectrum of the mic (works on show music, no generator needed).
+   - **Room tab**: after a log sweep, EDT / T20 / T30 per octave (63 Hz–8 kHz) with decay curves.
+   - **Traces → Import…**: REW / Smaart / VenueTuner text exports, to compare with old measurements.
+6. **Interface latency**: the driver-reported value is used automatically. For precision,
    cable an output to an input and run *Calibrate* in Settings once per device/rate/buffer.
 
 Snapshots store the patch (inputs, outputs, channels), routing and all processing. Recalling one

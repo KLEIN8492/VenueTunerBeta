@@ -9,6 +9,7 @@ namespace vt {
 // carry float32 arrays:
 //   TF: [1, n, delaySamples, frames, delayValid, freq[n], mag[n], phase[n], coh[n]]
 //   IR: [2, n, sampleRate, delaySamples, irStart, samples[n]]
+//   RTA: [3, n, splOffsetDb, calibrated, freq[n], levelDb[n]]  (dBFS; + offset = dB SPL)
 // Network callbacks are marshalled to the message thread before touching state.
 class Server : private juce::Timer
 {

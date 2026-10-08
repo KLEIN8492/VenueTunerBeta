@@ -90,6 +90,7 @@ struct MeasureConfig
 struct CalibrationData
 {
     std::map<juce::String, double> ioLatency; // "outDev|inDev|sr|buffer" -> samples
+    std::map<juce::String, double> splOffset; // mic source name -> dB to add to dBFS for dB SPL
     juce::String micCalPath;
 };
 

@@ -25,7 +25,7 @@ export interface SystemState {
   outputs: OutputConfig[];
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
   measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean };
-  cal: { ioLatency: Record<string, number>; micCalPath: string };
+  cal: { ioLatency: Record<string, number>; micCalPath: string; splOffset: Record<string, number> };
 }
 
 export interface Status {
@@ -34,6 +34,7 @@ export interface Status {
   numIn: number; numOut: number; cpu: number; xruns: number; callbacks: number;
   running: boolean; faultMuted: boolean; muteAll: boolean; error: string;
   sweeping: boolean; aligning: boolean;
+  spl: { fast: number[]; slow: number[]; leq: number[]; peak: number; leqSeconds: number; calibrated: boolean }; // [Z, A, C]
   driverLatency: number; ioLatency: number; ioLatencyCalibrated: boolean; calibrating: boolean;
   inPeak: number[]; outPeak: number[]; limGr: number[];
 }

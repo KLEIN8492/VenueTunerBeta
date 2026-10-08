@@ -60,6 +60,8 @@ void Analyzer::configureBands()
 void Analyzer::prepare(double sampleRate)
 {
     sr = sampleRate;
+    splMeter.prepare(sr);
+    rtaMeter.prepare(sr);
     resetRequested.store(false);
     refFifo.clear();
     measFifo.clear();
@@ -85,7 +87,11 @@ void Analyzer::doReset()
 bool Analyzer::process()
 {
     if (resetRequested.exchange(false)) {
-        if (const double p = pendingSr.exchange(0.0); p > 0.0) sr = p;
+        if (const double p = pendingSr.exchange(0.0); p > 0.0) {
+            sr = p;
+            splMeter.prepare(sr); // only on a rate change: a TF reset must not reset the Leq
+            rtaMeter.prepare(sr);
+        }
         refFifo.clear();
         measFifo.clear();
         doReset();
@@ -104,6 +110,8 @@ bool Analyzer::process()
         for (size_t i = 0; i < chunk; ++i) refHist[size_t(total + int64_t(i)) & (kHistory - 1)] = scratch[i];
         measFifo.pop(scratch.data(), chunk);
         for (size_t i = 0; i < chunk; ++i) measHist[size_t(total + int64_t(i)) & (kHistory - 1)] = scratch[i];
+        splMeter.process(scratch.data(), int(chunk));
+        rtaMeter.process(scratch.data(), int(chunk));
         total += int64_t(chunk);
         done += chunk;
     }
@@ -353,6 +361,13 @@ void Analyzer::analyseSweep(int64_t len)
         r.magDb.push_back(float(10.0 * std::log10(std::max(p / n, 1e-18))) - cal_.offsetDb(float(fr)));
         r.phaseDeg.push_back(float(std::arg(h) * 180.0 / kPi));
         r.coherence.push_back(1.0f);
+    }
+    // Room decay from the direct sound onwards (up to 3 s or what was captured).
+    {
+        const int len = std::min(int(3.0 * sr), M / 2 - peak);
+        std::vector<float> tail(size_t(std::max(0, len)));
+        for (int i = 0; i < len; ++i) tail[size_t(i)] = ir[(peak + i) % M];
+        r.decay = roomDecay(tail, sr);
     }
     r.irStart = std::max(0, peak - pre);
     r.ir.assign(size_t(pre + post), 0.0f);

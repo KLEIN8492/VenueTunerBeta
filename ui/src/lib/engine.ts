@@ -7,11 +7,13 @@ export interface TfFrame {
   freq: Float32Array; mag: Float32Array; phase: Float32Array; coh: Float32Array;
 }
 export interface IrFrame { type: 'ir'; sampleRate: number; delaySamples: number; irStart: number; samples: Float32Array }
+export interface RtaFrame { type: 'rta'; offsetDb: number; calibrated: boolean; freq: Float32Array; levelDb: Float32Array }
 
 // Binary layout (float32): see engine/src/server/Server.h
-export function decodeBinary(buf: ArrayBuffer): TfFrame | IrFrame {
+export function decodeBinary(buf: ArrayBuffer): TfFrame | IrFrame | RtaFrame {
   const f = new Float32Array(buf);
   const n = f[1];
+  if (f[0] === 3) return { type: 'rta', offsetDb: f[2], calibrated: f[3] === 1, freq: f.subarray(4, 4 + n), levelDb: f.subarray(4 + n, 4 + 2 * n) };
   if (f[0] === 1) {
     const at = (k: number) => f.subarray(5 + k * n, 5 + (k + 1) * n);
     return { type: 'tf', delaySamples: f[2], frames: f[3], delayValid: f[4] === 1, freq: at(0), mag: at(1), phase: at(2), coh: at(3) };
@@ -19,10 +21,12 @@ export function decodeBinary(buf: ArrayBuffer): TfFrame | IrFrame {
   return { type: 'ir', sampleRate: f[2], delaySamples: f[3], irStart: f[4], samples: f.subarray(5, 5 + n) };
 }
 
+export interface DecayBand { fc: number; edt: number; t20: number; t30: number; curve: number[] }
+
 type Events = {
-  state: SystemState; status: Status; tf: TfFrame; ir: IrFrame;
+  state: SystemState; status: Status; tf: TfFrame; ir: IrFrame; rta: RtaFrame;
   calibration: { ok: boolean; samples: number; message: string };
-  sweep: { ok: boolean; trace?: import('./types').Trace; message?: string };
+  sweep: { ok: boolean; trace?: import('./types').Trace; message?: string; decay?: DecayBand[] };
   align: { stage: 'measuring' | 'measured' | 'done' | 'error'; output?: number; arrivalMs?: number;
            delays?: { output: number; delayMs: number }[]; snapshot?: string; message?: string };
   error: { message: string };
@@ -76,7 +80,9 @@ export class Engine {
     ws.onmessage = (e) => {
       if (typeof e.data !== 'string') {
         const frame = decodeBinary(e.data as ArrayBuffer);
-        if (frame.type === 'tf') this.emit('tf', frame); else this.emit('ir', frame);
+        if (frame.type === 'tf') this.emit('tf', frame);
+        else if (frame.type === 'ir') this.emit('ir', frame);
+        else this.emit('rta', frame);
         return;
       }
       const m = JSON.parse(e.data);

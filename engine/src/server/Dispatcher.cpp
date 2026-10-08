@@ -120,6 +120,24 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "align.auto") return startAutoAlign(args["outputs"], args.hasProperty("reference") ? int(args["reference"]) : -1, err);
     if (cmd == "align.cancel") { if (alignJob.active) finishAlign("cancelled"); return true; }
 
+    if (cmd == "spl.calibrate") {
+        const int mic = state.measure.micSource;
+        if (mic < 0) { err = "choose the measurement mic first"; return {}; }
+        const double level = args.hasProperty("level") ? double(args["level"]) : 94.0;
+        const auto r = engine.analyzer().spl().reading();
+        if (r.slow[0] < -100) { err = "no signal on the mic: put the calibrator on it"; return {}; }
+        state.cal.splOffset[state.sources[size_t(mic)].name] = level - r.slow[0];
+        commit();
+        return state.cal.splOffset[state.sources[size_t(mic)].name];
+    }
+    if (cmd == "spl.clearCal") {
+        if (state.measure.micSource >= 0) state.cal.splOffset.erase(state.sources[size_t(state.measure.micSource)].name);
+        commit();
+        return true;
+    }
+    if (cmd == "spl.resetLeq") { engine.analyzer().spl().resetLeq(); return true; }
+    if (cmd == "rta.setResolution") { engine.analyzer().rta().setResolution(int(args["bands"])); return true; }
+
     if (cmd == "fir.load") {
         const int o = int(args["output"]);
         if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
@@ -371,6 +389,23 @@ juce::var Dispatcher::statusVar()
     set(v, "ioLatency", lat.samples);
     set(v, "ioLatencyCalibrated", lat.calibrated);
     set(v, "calibrating", calib.active);
+    {
+        const auto r = engine.analyzer().spl().reading();
+        const auto [off, cal] = splOffset();
+        auto spl = object();
+        auto arr3 = [off = off](const std::array<double, 3>& a) {
+            juce::Array<juce::var> x;
+            for (double d : a) x.add(d > -150 ? d + off : -200.0);
+            return juce::var(x);
+        };
+        set(spl, "fast", arr3(r.fast));
+        set(spl, "slow", arr3(r.slow));
+        set(spl, "leq", arr3(r.leq));
+        set(spl, "peak", r.peakZ > -150 ? r.peakZ + off : -200.0);
+        set(spl, "leqSeconds", r.leqSeconds);
+        set(spl, "calibrated", cal);
+        set(v, "spl", spl);
+    }
     set(v, "sweeping", sweepJob.active);
     set(v, "aligning", alignJob.active);
     juce::Array<juce::var> inPk, outPk, gr;
@@ -441,7 +476,8 @@ juce::var Dispatcher::startSweep(double seconds, juce::String& err)
     if (state.gen.targets.empty()) { err = "choose generator outputs first"; return {}; }
     sweepJob = {};
     sweepJob.active = true;
-    sweepJob.seconds = std::clamp(seconds, 1.0, 8.0);
+    // The analyzer history must hold sweep + 3 s of tail (10.9 s at 96 kHz).
+    sweepJob.seconds = std::clamp(seconds, 1.0, std::min(8.0, double(Analyzer::kHistory) / sampleRate() - 3.5));
     sweepJob.length = int64_t(sweepJob.seconds * sampleRate());
     sweepJob.id = ++sweepCounter;
     sweepJob.startedMs = juce::Time::getMillisecondCounterHiRes();
@@ -453,8 +489,8 @@ juce::var Dispatcher::startSweep(double seconds, juce::String& err)
 void Dispatcher::tickSweep()
 {
     const double elapsed = (juce::Time::getMillisecondCounterHiRes() - sweepJob.startedMs) / 1000.0;
-    if (!sweepJob.analysing && elapsed > sweepJob.seconds + 1.5) {
-        // Sweep + 1.5 s of tail (room decay, latency) is in the analyzer history now.
+    if (!sweepJob.analysing && elapsed > sweepJob.seconds + 3.0) {
+        // Sweep + 3 s of tail (room decay up to ~2.5 s, latency) is in the analyzer history now.
         sweepJob.analysing = true;
         commit(); // generator back to normal
         engine.analyzer().requestSweep(int64_t((elapsed + 0.25) * sampleRate()));
@@ -472,9 +508,19 @@ void Dispatcher::tickSweep()
         set(t, "coh", toArr(r.coherence));
         set(t, "delaySamples", r.delaySamples);
         set(t, "sampleRate", r.sampleRate);
-        emit("sweep", { { "ok", true }, { "trace", t } });
+        juce::Array<juce::var> decay;
+        for (auto& b : r.decay) {
+            auto d = object();
+            set(d, "fc", b.fc);
+            set(d, "edt", b.edt);
+            set(d, "t20", b.t20);
+            set(d, "t30", b.t30);
+            set(d, "curve", toArr(b.curveDb));
+            decay.add(d);
+        }
+        emit("sweep", { { "ok", true }, { "trace", t }, { "decay", decay } });
         commit();
-    } else if (elapsed > sweepJob.seconds + 10) {
+    } else if (elapsed > sweepJob.seconds + 12) {
         sweepJob.active = false;
         emit("sweep", { { "ok", false }, { "message", "sweep analysis timed out" } });
         commit();
@@ -729,6 +775,18 @@ juce::var Dispatcher::recallSnapshot(const juce::var& args, juce::String& err)
     if (next.measure.refSource >= int(next.sources.size())) { next.measure.refSource = -1; next.measure.ref = "generator"; }
     if (!replaceState(next, err, true)) return {};
     return toVar(state);
+}
+
+} // namespace vt
+
+namespace vt {
+
+std::pair<double, bool> Dispatcher::splOffset() const
+{
+    const int mic = state.measure.micSource;
+    if (mic < 0 || mic >= int(state.sources.size())) return { 0.0, false };
+    auto it = state.cal.splOffset.find(state.sources[size_t(mic)].name);
+    return it == state.cal.splOffset.end() ? std::pair { 0.0, false } : std::pair { it->second, true };
 }
 
 } // namespace vt

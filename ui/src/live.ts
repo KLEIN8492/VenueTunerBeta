@@ -245,3 +245,16 @@ engine.on('state', renderStrips);
 channels.onChange(() => engine.state && renderStrips(engine.state));
 engine.on('status', (st) => { renderMeters(st); renderBanner(st); });
 engine.on('open', () => void refreshSnapshots().catch(() => undefined));
+
+// ---------------------------------------------------------------- SPL readout (same weighting/speed as Measurement)
+engine.on('status', (st) => {
+  const s = st.spl;
+  if (!s) return;
+  let w = 1, t: 'fast' | 'slow' = 'slow';
+  try { w = Number(localStorage.getItem('vt.splW') ?? '1'); t = (localStorage.getItem('vt.splT') as 'fast' | 'slow') ?? 'slow'; } catch { /* defaults */ }
+  const letter = ['Z', 'A', 'C'][w] ?? 'A';
+  const v = s[t]?.[w] ?? -200;
+  $('splLive').innerHTML = v > -150
+    ? `L${letter}${t === 'fast' ? 'F' : 'S'} ${v.toFixed(1)} <span class="dim" style="font-size:11px">${s.calibrated ? `dB · L${letter}eq ${s.leq[w].toFixed(1)}` : 'dBFS (uncal.)'}</span>`
+    : '';
+});

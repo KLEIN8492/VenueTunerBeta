@@ -1,3 +1,4 @@
+#include <cmath>
 #include <catch2/catch_test_macros.hpp>
 #include "server/Dispatcher.h"
 
@@ -162,4 +163,26 @@ TEST_CASE("Dispatcher: outputs keep their processing slot when others are remove
     f.d->handle(cmd(R"({"id":4,"cmd":"routing.duplicateOutput","args":{"index":0}})"));
     CHECK(s.outputs[1].id != idC);                         // the copy has its own identity…
     CHECK(f.d->slotForTest(s.outputs[1].id) != slotC);     // …and its own slot
+}
+
+TEST_CASE("Dispatcher: SPL calibration is stored per mic")
+{
+    Fixture f;
+    f.d->handle(cmd(R"({"id":1,"cmd":"routing.addSource","args":{"type":"mic","name":"Mic FOH","channel":1}})"));
+    // 1 kHz at −40 dBFS RMS into the analyzer's mic path for 6 s.
+    std::vector<float> ref(512, 0.0f), mic(512);
+    double ph = 0;
+    for (int b = 0; b < int(6 * 48000 / 512); ++b) {
+        for (auto& x : mic) { x = float(0.01 * std::sqrt(2.0) * std::sin(ph)); ph += 2 * M_PI * 1000 / 48000; }
+        f.engine.analyzer().pushRef(ref.data(), 512);
+        f.engine.analyzer().pushMeas(mic.data(), 512);
+        f.engine.analyzer().process();
+    }
+    auto r = f.d->handle(cmd(R"({"id":2,"cmd":"spl.calibrate","args":{"level":94}})"));
+    REQUIRE(bool(r["ok"]));
+    CHECK(std::abs(double(r["result"]) - 134.0) < 0.2);
+    CHECK(f.d->stateForTest().cal.splOffset.count("Mic FOH") == 1);
+    auto st = f.d->statusVar();
+    CHECK(bool(st["spl"]["calibrated"]));
+    CHECK(std::abs(double(st["spl"]["slow"][0]) - 94.0) < 0.2);
 }

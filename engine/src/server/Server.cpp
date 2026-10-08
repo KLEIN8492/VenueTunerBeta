@@ -69,7 +69,17 @@ void Server::timerCallback()
 {
     ++tick;
     if (ws.getClients().empty()) return;
-    if (tick % 3 == 0) broadcastText(juce::JSON::toString(dispatcher.statusVar(), true)); // 10 Hz
+    if (tick % 3 == 0) { // 10 Hz
+        broadcastText(juce::JSON::toString(dispatcher.statusVar(), true));
+        const auto rta = engine.analyzer().rta().result();
+        if (!rta.freq.empty()) {
+            const auto [off, cal] = dispatcher.splOffset();
+            std::vector<float> f { 3.0f, float(rta.freq.size()), float(off), cal ? 1.0f : 0.0f };
+            f.insert(f.end(), rta.freq.begin(), rta.freq.end());
+            f.insert(f.end(), rta.levelDb.begin(), rta.levelDb.end());
+            broadcastBinary(f);
+        }
+    }
 
     if (tick % 2 == 0) { // TF at 15 Hz when there is new data
         const auto r = engine.analyzer().result();

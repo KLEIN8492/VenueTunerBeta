@@ -1,5 +1,6 @@
 import './lib/style.css';
-import { connectFromLocation, type TfFrame } from './lib/engine';
+import { connectFromLocation, type TfFrame, type RtaFrame, type DecayBand } from './lib/engine';
+import { parseTraceText } from './lib/traceimport';
 import { Plot, type PlotTrace } from './lib/plot';
 import { mountStatusBar, esc } from './lib/statusbar';
 import { coherenceAlpha } from './lib/coherence';
@@ -31,9 +32,30 @@ const saveTraces = () => { try { localStorage.setItem('vt.traces', JSON.stringif
 let live: TfFrame | null = null;
 let referenceArrivalMs: number | null = null;
 let overlay: PlotTrace[] = []; // previews from the Auto-EQ / Align tabs
+let view: 'tf' | 'rta' = 'tf';
+let rta: RtaFrame | null = null;
+const TF_VIEW = { title: 'MAGNITUDE', yUnit: 'dB', yMin: -30, yMax: 15, yStep: 5 };
+
+// RTA as a staircase: each band drawn flat between its edges.
+function rtaTrace(f: RtaFrame): PlotTrace {
+  const perOct = f.freq.length > 1 ? Math.round(1 / Math.log2(f.freq[1] / f.freq[0])) : 3;
+  const x: number[] = [], y: number[] = [];
+  const off = f.calibrated ? f.offsetDb : 0;
+  f.freq.forEach((fc, i) => {
+    const lo = fc * Math.pow(2, -0.5 / perOct), hi = fc * Math.pow(2, 0.5 / perOct);
+    x.push(lo, hi); y.push(f.levelDb[i] + off, f.levelDb[i] + off);
+  });
+  return { x, y, color: LIVE, width: 1.75, label: 'RTA' };
+}
 
 function redraw(): void {
   const magT: PlotTrace[] = [], phT: PlotTrace[] = [], cohT: PlotTrace[] = [];
+  if (view === 'rta') {
+    if (rta) magT.push(rtaTrace(rta));
+    mag.traces = magT;
+    mag.draw();
+    return;
+  }
   for (const t of traces.filter((t) => t.visible)) {
     const alpha = t.coh.map(coherenceAlpha); // same blanking as the live trace
     magT.push({ x: t.freq, y: t.mag, color: t.color, alpha, label: t.name });
@@ -51,7 +73,14 @@ function redraw(): void {
   mag.draw(); phase.draw(); coh.draw();
 }
 
-engine.on('tf', (f) => { live = f; redraw(); renderDelay(); });
+engine.on('tf', (f) => { live = f; if (view === 'tf') redraw(); renderDelay(); });
+engine.on('rta', (f) => {
+  rta = f;
+  if (view !== 'rta') return;
+  const unit = f.calibrated ? 'dB SPL' : 'dBFS';
+  if (mag.opts.yUnit !== unit) Object.assign(mag.opts, f.calibrated ? { yUnit: unit, yMin: 20, yMax: 120, yStep: 10 } : { yUnit: unit, yMin: -100, yMax: 0, yStep: 10 });
+  redraw();
+});
 engine.on('ir', (f) => {
   if (!f.samples.length) return;
   let peak = 0;
@@ -70,8 +99,16 @@ engine.on('ir', (f) => {
 // ---------------------------------------------------------------- side panel
 const side = $('side');
 side.innerHTML = `
-  <div class="sidetabs" id="sideTabs"><button data-st="measure" class="on">Measure</button><button data-st="autoeq">Auto-EQ</button><button data-st="align">Align</button></div>
+  <div class="sidetabs" id="sideTabs"><button data-st="measure" class="on">Measure</button><button data-st="autoeq">Auto-EQ</button><button data-st="align">Align</button><button data-st="room">Room</button></div>
   <div data-sp="measure">
+  <h2>Sound level</h2>
+  <div class="row"><span id="splVal" class="big">—</span><span id="splUnit" class="dim grow"></span><span id="splPeak" class="dim"></span></div>
+  <div class="row"><select id="splW"><option value="1">A</option><option value="2">C</option><option value="0">Z</option></select>
+    <select id="splT"><option value="slow">Slow</option><option value="fast">Fast</option></select>
+    <span id="splLeq" class="dim grow"></span><button id="splReset" title="reset Leq">↺ Leq</button></div>
+  <div class="row"><label>Calibrator</label><input id="splCalLevel" type="number" value="94" step="0.1"/><span class="dim">dB</span><button id="splCal" class="grow">Calibrate mic</button></div>
+  <div class="row"><label>View</label><button id="viewTf" class="on grow">Transfer fn</button><button id="viewRta" class="grow">RTA</button><select id="rtaRes"><option value="3">1/3</option><option value="6">1/6</option></select></div>
+
   <h2>Generator</h2>
   <div class="row"><button id="genOn" class="grow">Pink noise OFF</button></div>
   <div class="row"><label>Level</label><input id="genLevel" type="range" min="-60" max="-12" step="1" class="grow"/><span id="genLevelV" class="dim"></span></div>
@@ -97,10 +134,17 @@ side.innerHTML = `
   <h2>Traces</h2>
   <div class="row"><input id="traceName" type="text" class="grow" placeholder="name"/><button id="capture">Capture [C]</button></div>
   <div id="traceList" class="list"></div>
-  <div class="row"><button id="avgTraces" class="grow">Average visible</button><button id="exportCsv">Export CSV</button></div>
+  <div class="row"><button id="avgTraces" class="grow">Average visible</button><button id="importTrace">Import…</button><button id="exportCsv">Export</button>
+    <input id="importFile" type="file" accept=".txt,.csv,.frd,.dat" multiple hidden/></div>
   <div class="dim" style="margin-top:8px">Wheel: move magnitude range · double-click: reset · G: generator</div>
   </div>
   <div data-sp="autoeq" hidden></div>
+  <div data-sp="room" hidden>
+    <h2>Room acoustics (RT60)</h2>
+    <div class="dim">Run a log sweep (Measure tab, S) with the mic in the audience area and the room quiet. Reverberation times per octave appear here.</div>
+    <table id="rtTable" style="margin-top:6px"></table>
+    <div style="position:relative;height:210px;margin-top:8px"><canvas id="decayPlot" style="position:absolute;inset:0;width:100%;height:100%"></canvas></div>
+  </div>
   <div data-sp="align" hidden>
     <div id="xoAlign"></div>
     <h2>Auto delay alignment (arrival times)</h2>
@@ -336,3 +380,73 @@ document.addEventListener('keydown', (e) => {
 });
 
 renderTraces();
+
+// ---------------------------------------------------------------- sound level
+const pref = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const setPref = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
+($('splW') as HTMLSelectElement).value = pref('vt.splW', '1');
+($('splT') as HTMLSelectElement).value = pref('vt.splT', 'slow');
+$('splW').onchange = (e) => setPref('vt.splW', (e.target as HTMLSelectElement).value);
+$('splT').onchange = (e) => setPref('vt.splT', (e.target as HTMLSelectElement).value);
+engine.on('status', (st) => {
+  const s = st.spl;
+  if (!s) return;
+  const w = Number(($('splW') as HTMLSelectElement).value), t = ($('splT') as HTMLSelectElement).value as 'fast' | 'slow';
+  const letter = ['Z', 'A', 'C'][w];
+  const v = s[t][w];
+  $('splVal').textContent = v > -150 ? v.toFixed(1) : '—';
+  $('splUnit').innerHTML = `L${letter}${t === 'fast' ? 'F' : 'S'} ${s.calibrated ? 'dB SPL' : '<span class="warn">dBFS · mic not calibrated</span>'}`;
+  $('splPeak').textContent = s.peak > -150 ? `peak ${s.peak.toFixed(1)}` : '';
+  const m = Math.floor(s.leqSeconds / 60), sec = Math.floor(s.leqSeconds % 60);
+  $('splLeq').textContent = s.leq[w] > -150 ? `L${letter}eq ${s.leq[w].toFixed(1)} (${m}:${String(sec).padStart(2, '0')})` : '';
+});
+$('splReset').onclick = () => report(engine.request('spl.resetLeq'));
+$('splCal').onclick = () => {
+  const level = Number(($('splCalLevel') as HTMLInputElement).value);
+  if (!confirm(`Put the ${level} dB calibrator on the measurement mic and switch it on. Calibrate now?`)) return;
+  report(engine.request<number>('spl.calibrate', { level }).then((off) => alert(`Mic calibrated (offset ${off.toFixed(2)} dB).`)));
+};
+
+// ---------------------------------------------------------------- TF / RTA view
+function setView(v: 'tf' | 'rta'): void {
+  view = v;
+  $('viewTf').classList.toggle('on', v === 'tf');
+  $('viewRta').classList.toggle('on', v === 'rta');
+  if (v === 'tf') Object.assign(mag.opts, TF_VIEW);
+  else Object.assign(mag.opts, { title: 'RTA', yUnit: '', yMin: -100, yMax: 0, yStep: 10 }); // unit set by the first frame
+  redraw();
+}
+$('viewTf').onclick = () => setView('tf');
+$('viewRta').onclick = () => setView('rta');
+$('rtaRes').onchange = (e) => report(engine.request('rta.setResolution', { bands: Number((e.target as HTMLSelectElement).value) }));
+
+// ---------------------------------------------------------------- trace import
+$('importTrace').onclick = () => $('importFile').click();
+$('importFile').onchange = async (e) => {
+  const input = e.target as HTMLInputElement;
+  for (const f of Array.from(input.files ?? [])) {
+    try { addTrace(parseTraceText(await f.text(), f.name)); } catch (err) { alert((err as Error).message); }
+  }
+  input.value = '';
+};
+
+// ---------------------------------------------------------------- room acoustics
+const decayPlot = new Plot($('decayPlot') as HTMLCanvasElement, { xMin: 0, xMax: 1.5, logX: false, yMin: -70, yMax: 0, yStep: 10, yUnit: 'dB', title: 'DECAY', yLocked: true, xFormat: (x) => `${x.toFixed(1)}s` });
+function renderDecay(bands: DecayBand[]): void {
+  const fmt = (v: number) => (v > 0 ? v.toFixed(2) : '—');
+  const mid = bands.filter((b) => b.fc === 500 || b.fc === 1000).map((b) => b.t30 > 0 ? b.t30 : b.t20).filter((v) => v > 0);
+  $('rtTable').innerHTML = `<tr><th>Hz</th><th>EDT</th><th>T20</th><th>T30</th></tr>` +
+    bands.map((b) => `<tr><td>${b.fc}</td><td>${fmt(b.edt)}</td><td>${fmt(b.t20)}</td><td>${fmt(b.t30)}</td></tr>`).join('') +
+    (mid.length ? `<tr><td colspan="3">T mid (500 Hz–1 kHz)</td><td><b>${(mid.reduce((a, b) => a + b, 0) / mid.length).toFixed(2)} s</b></td></tr>` : '');
+  // Show the decay down to ~−60 dB: 1.3 × the longest measured RT, within 0.3–3 s.
+  const longest = Math.max(0, ...bands.map((b) => Math.max(b.t30, b.t20, b.edt)));
+  decayPlot.opts.xMax = Math.min(3, Math.max(0.3, longest * 1.3));
+  decayPlot.traces = bands.map((b, i) => ({ x: b.curve.map((_, k) => k * 0.01), y: b.curve, color: PALETTE[i % PALETTE.length], label: `${b.fc}` }));
+  decayPlot.draw();
+}
+engine.on('sweep', (ev) => {
+  if (!ev.ok || !ev.decay?.length) return;
+  setPref('vt.decay', JSON.stringify(ev.decay));
+  renderDecay(ev.decay);
+});
+try { const d = JSON.parse(pref('vt.decay', '[]')); if (d.length) renderDecay(d); } catch { /* none yet */ }

@@ -111,9 +111,10 @@ export class Plot {
         if (t.major) { ctx.fillStyle = css('--dim'); ctx.textAlign = 'center'; ctx.fillText(fmtX(t.f), x, H + 9); }
       }
     } else {
-      const span = o.xMax - o.xMin;
-      const step = Math.pow(10, Math.floor(Math.log10(span / 5)));
-      const s = span / step > 10 ? step * 2 : step;
+      // "Nice" step (1/2/5 × 10^n) giving at most one label per ~70 px.
+      const span = o.xMax - o.xMin, maxLabels = Math.max(2, Math.floor(W / 70));
+      const raw = span / maxLabels, mag10 = Math.pow(10, Math.floor(Math.log10(raw)));
+      const s = [1, 2, 5, 10].map((m) => m * mag10).find((v) => v >= raw) ?? 10 * mag10;
       for (let v = Math.ceil(o.xMin / s) * s; v <= o.xMax; v += s) {
         const x = Math.round(this.px(v, W)) + 0.5;
         ctx.strokeStyle = css('--grid');

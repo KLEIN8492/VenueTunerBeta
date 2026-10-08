@@ -35,6 +35,7 @@ public:
     Latency currentLatency();
 
     juce::var statusVar();
+    std::pair<double, bool> splOffset() const; // offset for the current mic, calibrated?
     SystemState& stateForTest() { return state; }
     const SystemState& getState() const { return state; }
 
