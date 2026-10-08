@@ -38,6 +38,7 @@ struct MeasureParams
 struct Params
 {
     int numOut = 0;
+    uint64_t consoleInputs = 0; // only these inputs may be routed to outputs
     OutputParams out[kMaxCh];
     GeneratorParams gen;
     MeasureParams measure;

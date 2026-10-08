@@ -56,7 +56,12 @@ void Analyzer::doReset()
 
 bool Analyzer::process()
 {
-    if (resetRequested.exchange(false)) doReset();
+    if (resetRequested.exchange(false)) {
+        if (const double p = pendingSr.exchange(0.0); p > 0.0) sr = p;
+        refFifo.clear();
+        measFifo.clear();
+        doReset();
+    }
 
     // Consume ref and meas in lock-step (the audio thread always pushes both).
     const size_t n = std::min(refFifo.available(), measFifo.available());

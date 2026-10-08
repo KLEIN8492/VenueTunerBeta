@@ -31,7 +31,9 @@ public:
     };
 
     Analyzer();
-    void prepare(double sampleRate);
+    void prepare(double sampleRate); // tests / before streaming: resets immediately
+    // Engine: safe while streaming — the analysis thread applies it on its next process().
+    void requestReset(double sampleRate) { pendingSr.store(sampleRate); resetRequested.store(true); }
 
     void pushRef(const float* data, int n) { refFifo.push(data, size_t(n)); }
     void pushMeas(const float* data, int n) { measFifo.push(data, size_t(n)); }
@@ -76,6 +78,7 @@ private:
     int irStart = 0;
 
     std::atomic<bool> resetRequested { false };
+    std::atomic<double> pendingSr { 0.0 };
     std::atomic<int> averaging { 16 }, smoothing { 24 };
 
     mutable std::mutex calLock;

@@ -315,6 +315,8 @@ Params toParams(const SystemState& s)
         q.limReleaseMs = c.limReleaseMs;
         for (size_t i = 0; i < c.mix.size() && i < size_t(kMaxCh); ++i) q.mix[i] = c.mix[i];
     }
+    for (size_t i = 0; i < s.inputs.size() && i < size_t(kMaxCh); ++i)
+        if (s.inputs[i].role == "console") p.consoleInputs |= (1ull << i);
     p.gen.on = s.gen.on;
     p.gen.levelDb = s.gen.levelDb;
     for (int t : s.gen.targets)
