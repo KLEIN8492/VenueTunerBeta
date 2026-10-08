@@ -77,13 +77,22 @@ side.innerHTML = `
   <div class="row"><label>Reference</label><select id="ref" class="grow"></select></div>
   <div class="row"><label>Average</label><select id="avg" class="grow"></select></div>
   <div class="row"><label>Smoothing</label><select id="smooth" class="grow"></select></div>
+  <div class="row"><label>FFT</label><select id="fftMode" class="grow"></select></div>
   <div class="row"><button id="reset" class="grow">Reset avg [R]</button></div>
+  <div class="row"><button id="sweep" class="grow">Log sweep [S]</button><select id="sweepLen"><option value="1">1 s</option><option value="3" selected>3 s</option><option value="5">5 s</option><option value="8">8 s</option></select></div>
+  <div id="sweepMsg" class="dim"></div>
 
   <h2>Delay finder</h2>
   <div id="delay" class="dim">waiting for signal…</div>
   <div class="row"><button id="storeRef" class="grow">Store as reference arrival</button></div>
   <div id="align" class="dim"></div>
   <div class="row"><select id="alignOut" class="grow"></select><button id="alignBtn">Align to ref</button></div>
+
+  <h2>Auto delay alignment</h2>
+  <div id="alignOuts" class="row" style="flex-wrap:wrap"></div>
+  <div class="row"><label>Align to</label><select id="alignRef" class="grow"></select></div>
+  <div class="row"><button id="alignStart" class="grow">Auto-align</button><button id="alignCancel">Cancel</button></div>
+  <div id="alignMsg" class="dim">Keep the mic still. Each output plays pink noise alone; delays are set so all arrive together. A before/after snapshot is saved.</div>
 
   <h2>Traces</h2>
   <div class="row"><input id="traceName" type="text" class="grow" placeholder="name"/><button id="capture">Capture [C]</button></div>
@@ -110,6 +119,11 @@ function renderControls(s: SystemState): void {
   ($('avg') as HTMLSelectElement).innerHTML = [1, 2, 4, 8, 16, 32, 64, 128].map((n) => opt(n, `${n} frames`, s.measure.averaging === n)).join('');
   ($('smooth') as HTMLSelectElement).innerHTML = [[0, 'none'], [48, '1/48 oct'], [24, '1/24 oct'], [12, '1/12 oct'], [6, '1/6 oct'], [3, '1/3 oct']]
     .map(([n, l]) => opt(n, String(l), s.measure.smoothing === n)).join('');
+  ($('fftMode') as HTMLSelectElement).innerHTML = opt(1, 'Multi-time-window', s.measure.multiWindow) + opt(0, 'Fixed 16k', !s.measure.multiWindow);
+  $('alignOuts').innerHTML = s.outputs.map((o, i) =>
+    `<button data-a="${i}" class="${alignPick.has(i) ? 'on' : ''}" title="${esc(o.name)}">${i + 1}</button>`).join('');
+  const refSel = $('alignRef') as HTMLSelectElement, prevRef = refSel.value;
+  refSel.innerHTML = opt(-1, 'latest arrival', prevRef === '-1' || !prevRef) + s.outputs.map((o, i) => opt(i, `${i + 1} · ${o.name}`, prevRef === String(i))).join('');
   const alignSel = $('alignOut') as HTMLSelectElement;
   const prev = alignSel.value;
   alignSel.innerHTML = s.outputs.map((o, i) => opt(i, `${i + 1} · ${o.name}`, String(i) === prev)).join('');
@@ -141,6 +155,44 @@ $('ref').onchange = (e) => {
 $('avg').onchange = (e) => report(engine.patch('measure/averaging', Number((e.target as HTMLSelectElement).value)));
 $('smooth').onchange = (e) => report(engine.patch('measure/smoothing', Number((e.target as HTMLSelectElement).value)));
 $('reset').onclick = () => report(engine.request('measure.reset'));
+$('fftMode').onchange = (e) => report(engine.patch('measure/multiWindow', (e.target as HTMLSelectElement).value === '1'));
+
+// ---------------------------------------------------------------- log sweep
+$('sweep').onclick = () => {
+  const seconds = Number(($('sweepLen') as HTMLSelectElement).value);
+  $('sweepMsg').textContent = `sweeping ${seconds} s… keep quiet`;
+  report(engine.request('measure.sweep', { seconds }).catch((e: Error) => { $('sweepMsg').textContent = ''; throw e; }));
+};
+engine.on('sweep', (ev) => {
+  if (!ev.ok || !ev.trace) { $('sweepMsg').innerHTML = `<span class="bad">${esc(ev.message ?? 'sweep failed')}</span>`; return; }
+  addTrace(ev.trace);
+  $('sweepMsg').textContent = `${ev.trace.name}: ${samplesToMs(ev.trace.delaySamples, ev.trace.sampleRate).toFixed(3)} ms total`;
+});
+
+// ---------------------------------------------------------------- auto alignment
+const alignPick = new Set<number>();
+$('alignOuts').onclick = (e) => {
+  const a = (e.target as HTMLElement).dataset.a;
+  if (a === undefined) return;
+  const i = Number(a);
+  if (alignPick.has(i)) alignPick.delete(i); else alignPick.add(i);
+  if (engine.state) renderControls(engine.state);
+};
+$('alignStart').onclick = () => {
+  if (alignPick.size < 2) return alert('Pick at least two outputs to align.');
+  const reference = Number(($('alignRef') as HTMLSelectElement).value);
+  report(engine.request('align.auto', { outputs: [...alignPick].sort((a, b) => a - b), reference }));
+};
+$('alignCancel').onclick = () => report(engine.request('align.cancel'));
+engine.on('align', (ev) => {
+  const name = (o?: number) => (o !== undefined && engine.state ? `${o + 1} · ${engine.state.outputs[o]?.name}` : '');
+  const el = $('alignMsg');
+  if (ev.stage === 'measuring') el.textContent = `measuring ${name(ev.output)}…`;
+  if (ev.stage === 'measured') el.textContent = `${name(ev.output)}: ${ev.arrivalMs!.toFixed(3)} ms`;
+  if (ev.stage === 'error') el.innerHTML = `<span class="bad">${esc(ev.message ?? 'failed')}</span>`;
+  if (ev.stage === 'done')
+    el.innerHTML = ev.delays!.map((d) => `${esc(name(d.output))} → ${d.delayMs.toFixed(3)} ms`).join('<br>') + `<br><span class="ok">saved as "${esc(ev.snapshot ?? '')}"</span>`;
+});
 
 // ---------------------------------------------------------------- delay readout + alignment
 // Arrival time = total delay minus interface latency (internal loopback) — it still
@@ -203,13 +255,18 @@ $('traceList').ondblclick = (e) => {
   if (name) { traces[+i].name = name; renderTraces(); }
 };
 
+// Traces keep the processing that was active when captured: the EQ editor uses it to
+// compute "predicted after EQ".
+function addTrace(t: Trace): void {
+  traces.push({ ...t, outputs: engine.state?.outputs, color: PALETTE[traces.length % PALETTE.length], visible: true });
+  renderTraces();
+}
+
 async function capture(): Promise<void> {
   const input = $('traceName') as HTMLInputElement;
   const name = input.value.trim() || `T${traces.length + 1}`;
-  const t = await engine.request<Trace>('measure.capture', { name });
-  traces.push({ ...t, color: PALETTE[traces.length % PALETTE.length], visible: true });
+  addTrace(await engine.request<Trace>('measure.capture', { name }));
   input.value = '';
-  renderTraces();
 }
 $('capture').onclick = () => report(capture());
 
@@ -248,6 +305,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'g') $('genOn').click();
   if (e.key === 'c') $('capture').click();
   if (e.key === 'r') $('reset').click();
+  if (e.key === 's') $('sweep').click();
 });
 
 renderTraces();

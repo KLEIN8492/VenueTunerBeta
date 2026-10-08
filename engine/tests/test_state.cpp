@@ -117,6 +117,9 @@ TEST_CASE("Filter config round-trips and validates")
     CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq/0/freq", 5.0, err));     // below 10 Hz
     CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq/0/type", "wobble", err));
     CHECK_FALSE(vt::applyPatch(s, "outputs/0/hp/type", "lr96", err));
+    CHECK(vt::applyPatch(s, "outputs/0/hp", juce::JSON::parse(R"({"type":"bw24","freq":80})"), err)); // whole object
+    CHECK(s.outputs[0].hp.freq == 80.0f);
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/hp", juce::JSON::parse(R"({"type":"bw24","freq":2})"), err));
     CHECK_FALSE(vt::applyPatch(s, "outputs/0/ap/0/order", 3, err));
 
     juce::Array<juce::var> many;

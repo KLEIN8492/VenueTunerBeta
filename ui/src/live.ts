@@ -2,6 +2,7 @@ import './lib/style.css';
 import { connectFromLocation } from './lib/engine';
 import { mountStatusBar, esc } from './lib/statusbar';
 import { linToDb, samplesToMs } from './lib/scale';
+import { EqEditor } from './lib/eqeditor';
 import type { OutputConfig, Status, SystemState } from './lib/types';
 
 const engine = connectFromLocation();
@@ -11,6 +12,8 @@ const report = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));
 
 const selected = new Set<number>();
 let builtFor = '';
+const editor = new EqEditor($('editor'), engine, () => [...selected]);
+if (import.meta.env.DEV) Object.assign(window, { vtEditor: editor }); // debugging aid
 
 // ---------------------------------------------------------------- strips
 // Strips are rebuilt only when the output list shape changes; values are updated in
@@ -61,8 +64,11 @@ function renderStrips(s: SystemState): void {
 function renderLatency(el: HTMLElement, o: OutputConfig): void {
   const st = engine.status;
   if (!st) return;
-  const io = samplesToMs(st.ioLatency, st.sampleRate || 48000);
-  el.querySelector('[data-v="lat"]')!.textContent = `latency ${(io + o.delayMs).toFixed(2)} ms (I/O ${io.toFixed(2)} + delay)`;
+  const sr = st.sampleRate || 48000;
+  const io = samplesToMs(st.ioLatency, sr);
+  const fir = o.fir?.on ? samplesToMs(o.fir.latencySamples, sr) : 0;
+  el.querySelector('[data-v="lat"]')!.textContent =
+    `latency ${(io + o.delayMs + fir).toFixed(2)} ms` + (fir ? ` (FIR ${fir.toFixed(2)})` : '');
 }
 
 const meterPct = (db: number) => Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
@@ -93,7 +99,8 @@ $('strips').addEventListener('click', (e) => {
   const i = Number(strip.dataset.i);
   if (el.closest('[data-sel]')) {
     if (!e.metaKey && !e.shiftKey) selected.clear();
-    if (selected.has(i)) selected.delete(i); else selected.add(i);
+    if (selected.has(i) && selected.size > 1) selected.delete(i); else selected.add(i);
+    editor.setOutput(i);
     renderStrips(engine.state);
     return;
   }

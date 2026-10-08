@@ -11,7 +11,7 @@
     .strip { width: 132px; flex: none; border-right: 1px solid var(--line); padding: 6px; display: flex; flex-direction: column; gap: 4px; }
     .strip.sel { background: #202326; }
     .strip .name { border-top: 3px solid; padding-top: 3px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .meters { display: flex; gap: 4px; height: 160px; }
+    .meters { display: flex; gap: 4px; height: 96px; }
     .meter { width: 14px; background: #0c0d0e; border: 1px solid var(--line); position: relative; }
     .meter .fill { position: absolute; bottom: 0; left: 0; right: 0; background: var(--ok); }
     .meter .fill.hot { background: var(--warn); }
@@ -22,6 +22,17 @@
     .strip input[type=number] { width: 58px; }
     .snap { width: 280px; border-left: 1px solid var(--line); padding: 4px 10px; background: var(--panel); overflow-y: auto; }
     .vals { font-size: 10px; color: var(--dim); }
+    .top { display: flex; height: 330px; flex: none; border-bottom: 1px solid var(--line); min-height: 0; }
+    #editor { flex: 1; min-height: 0; }
+    .eq { display: flex; height: 100%; }
+    .eq-graphs { flex: 1; display: grid; grid-template-rows: minmax(0, 64fr) minmax(0, 36fr); min-width: 0; }
+    .eq-graphs .cv { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
+    .eq-graphs canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .eq-side { width: 390px; border-left: 1px solid var(--line); padding: 4px 10px 12px; overflow-y: auto; background: var(--panel); }
+    .eqt td, .eqt th { padding: 1px 3px; }
+    .eqt select { padding: 1px 2px; }
+    tr.sel td { background: #3a3220; }
+    .strip .name { cursor: pointer; }
   </style>
 </head>
 <body>
@@ -30,12 +41,13 @@
     <div id="banner"></div>
     <div class="toolbar">
       <button id="muteAll">MUTE ALL</button>
-      <span class="dim">Click a strip name to select · Linked edit: hold ⇧ while changing a value to apply to all selected</span>
+      <span class="dim">Click a strip name to edit its filters · ⌘-click: multi-select · hold ⇧ while changing a value to apply it to all selected</span>
     </div>
-    <div class="main">
+    <div class="top">
       <div class="strips" id="strips"></div>
       <div class="snap" id="snap"></div>
     </div>
+    <div id="editor"></div>
   </div>
   <script type="module" src="./src/live.ts"></script>
 </body>

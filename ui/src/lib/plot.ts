@@ -25,6 +25,14 @@ const css = (name: string) => getComputedStyle(document.documentElement).getProp
 export class Plot {
   traces: PlotTrace[] = [];
   markers: { x: number; color: string }[] = [];
+  // Drawn after the traces, in plot-area coordinates (use toPx).
+  onOverlay?: (ctx: CanvasRenderingContext2D) => void;
+
+  // Plot-area geometry from the current canvas size (no dependency on a drawn frame).
+  get geom() {
+    const padL = 44, padR = 14, padB = 16, padT = 14;
+    return { padL, padT, W: Math.max(1, this.w - padL - padR), H: Math.max(1, this.h - padB - padT) };
+  }
   private ctx: CanvasRenderingContext2D;
   private w = 0; private h = 0;
   private hoverX: number | null = null;
@@ -65,6 +73,18 @@ export class Plot {
     requestAnimationFrame(() => { this.queued = false; this.render(); });
   }
 
+  // Data → plot-area pixels, and canvas offset pixels → data.
+  toPx(x: number, y: number): [number, number] {
+    const { W, H } = this.geom;
+    return [this.px(x, W), linY(y, this.opts.yMin, this.opts.yMax, H)];
+  }
+  fromOffset(offsetX: number, offsetY: number): [number, number] {
+    const { padL, padT, W, H } = this.geom, o = this.opts;
+    const px = offsetX - padL, py = offsetY - padT;
+    const x = o.logX ? invLogX(px, o.xMin, o.xMax, W) : o.xMin + (px / W) * (o.xMax - o.xMin);
+    return [x, o.yMax - (py / H) * (o.yMax - o.yMin)];
+  }
+
   private px(x: number, width: number): number {
     const o = this.opts;
     return o.logX ? logX(x, o.xMin, o.xMax, width) : linX(x, o.xMin, o.xMax, width);
@@ -72,9 +92,8 @@ export class Plot {
 
   private render(): void {
     const { ctx, opts: o } = this;
-    const padL = 44, padR = 14, padB = 16, padT = 14;
-    const W = this.w - padL - padR, H = this.h - padB - padT;
-    if (W <= 0 || H <= 0) return;
+    if (this.w <= 60 || this.h <= 32) return;
+    const { padL, padT, W, H } = this.geom;
     ctx.clearRect(0, 0, this.w, this.h);
     ctx.font = `10px ${css('--mono')}`;
     ctx.textBaseline = 'middle';
@@ -120,6 +139,7 @@ export class Plot {
       ctx.setLineDash([]);
     }
     for (const t of this.traces) this.drawTrace(t, W, H);
+    this.onOverlay?.(ctx);
     ctx.restore();
 
     // Hover readout

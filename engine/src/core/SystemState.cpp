@@ -371,7 +371,8 @@ bool applyPatch(SystemState& s, const juce::String& path, const juce::var& value
         const bool numOld = old.isDouble() || old.isInt() || old.isInt64();
         const bool numNew = value.isDouble() || value.isInt() || value.isInt64();
         if (!isMap && !(numOld && numNew) && !(old.isBool() && value.isBool())
-            && !(old.isString() && value.isString()) && !(old.isArray() && value.isArray())) {
+            && !(old.isString() && value.isString()) && !(old.isArray() && value.isArray())
+            && !(old.isObject() && value.isObject())) {
             err = path + ": wrong type";
             return false;
         }

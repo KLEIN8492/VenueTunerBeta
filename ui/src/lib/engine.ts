@@ -22,6 +22,10 @@ export function decodeBinary(buf: ArrayBuffer): TfFrame | IrFrame {
 type Events = {
   state: SystemState; status: Status; tf: TfFrame; ir: IrFrame;
   calibration: { ok: boolean; samples: number; message: string };
+  sweep: { ok: boolean; trace?: import('./types').Trace; message?: string };
+  align: { stage: 'measuring' | 'measured' | 'done' | 'error'; output?: number; arrivalMs?: number;
+           delays?: { output: number; delayMs: number }[]; snapshot?: string; message?: string };
+  error: { message: string };
   open: void; close: void;
 };
 type Listener<T> = (v: T) => void;
@@ -82,7 +86,7 @@ export class Engine {
         if (m.ok) p.resolve(m.result); else p.reject(new Error(m.error));
       } else if (m.event === 'state') { this.state = m.state; this.emit('state', m.state); }
       else if (m.event === 'status') { this.status = m; this.emit('status', m); }
-      else if (m.event === 'calibration') this.emit('calibration', m);
+      else if (m.event) this.emit(m.event, m);
     };
   }
 }

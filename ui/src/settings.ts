@@ -4,7 +4,6 @@ import { mountStatusBar, esc } from './lib/statusbar';
 import { dbToLin, linToDb, samplesToMs } from './lib/scale';
 import type { SystemState } from './lib/types';
 
-declare global { interface Window { vt?: { pathForFile(f: File): string } } }
 
 const engine = connectFromLocation();
 mountStatusBar(document.getElementById('status')!, engine);
