@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VenueTuner · Measurement</title>
+</head>
+<body>
+  <div class="app">
+    <div class="statusbar" id="status"></div>
+    <div class="main">
+      <div class="plots" style="grid-template-rows: minmax(0, 44fr) minmax(0, 26fr) minmax(0, 14fr) minmax(0, 16fr)">
+        <div class="cv"><canvas id="mag"></canvas></div>
+        <div class="cv"><canvas id="phase"></canvas></div>
+        <div class="cv"><canvas id="coh"></canvas></div>
+        <div class="cv"><canvas id="ir"></canvas></div>
+      </div>
+      <div class="side" id="side"></div>
+    </div>
+  </div>
+  <script type="module" src="./src/measurement.ts"></script>
+</body>
+</html>

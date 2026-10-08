@@ -1,0 +1,43 @@
+/* VenueTuner: raw, dense, dark. Flat grey, monospace numbers, no rounding, no motion. */
+:root {
+  --bg: #161718; --panel: #1d1f21; --line: #2c2f33; --fg: #d6d8da; --dim: #7c8186;
+  --accent: #4fd1c5; --warn: #e0b341; --bad: #e5484d; --ok: #46a758;
+  --grid: #24272a; --grid-major: #34383d;
+  --mono: "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; border-radius: 0 !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+  font: 11px/1.35 var(--mono); overflow: hidden; user-select: none; }
+button, input, select { font: inherit; color: var(--fg); background: #111213; border: 1px solid var(--line); padding: 2px 5px; }
+button { cursor: pointer; text-transform: uppercase; letter-spacing: .04em; }
+button:hover { border-color: var(--dim); }
+button.on { background: var(--accent); color: #000; border-color: var(--accent); }
+button.danger, button.mute.on { background: var(--bad); color: #fff; border-color: var(--bad); }
+input[type=number] { width: 64px; text-align: right; }
+input[type=text] { user-select: text; }
+input:focus, select:focus, button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+h2 { font-size: 10px; font-weight: 600; color: var(--dim); letter-spacing: .12em; margin: 10px 0 4px; text-transform: uppercase; }
+.statusbar { display: flex; gap: 14px; padding: 3px 8px; border-bottom: 1px solid var(--line); background: #0f1011; white-space: nowrap; overflow: hidden; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); font-weight: 600; }
+.dim { color: var(--dim); }
+.row { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
+.row > label { color: var(--dim); min-width: 70px; }
+.grow { flex: 1; }
+.app { display: flex; flex-direction: column; height: 100%; }
+.main { flex: 1; display: flex; min-height: 0; }
+.side { width: 290px; border-left: 1px solid var(--line); padding: 4px 10px 10px; overflow-y: auto; background: var(--panel); }
+.plots { flex: 1; display: grid; min-width: 0; }
+.plots .cv { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
+/* Absolutely positioned so the canvas buffer size never feeds back into layout. */
+.plots canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.big { font-size: 18px; color: var(--accent); }
+.list { border: 1px solid var(--line); max-height: 220px; overflow-y: auto; }
+.list .item { display: flex; gap: 6px; align-items: center; padding: 2px 4px; border-bottom: 1px solid var(--line); }
+.swatch { width: 10px; height: 10px; display: inline-block; flex: none; }
+.banner { background: var(--bad); color: #fff; padding: 6px 10px; display: flex; gap: 12px; align-items: center; font-weight: 600; }
+.banner button { background: #fff; color: var(--bad); border-color: #fff; font-weight: 700; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid var(--line); padding: 2px 4px; text-align: left; font-weight: normal; }
+th { color: var(--dim); }
+.scroll { overflow: auto; }

@@ -74,10 +74,10 @@ app/
 - `template<class T> class TripleBuffer { void write(const T&); /*control*/ const T& read(); /*audio: returns latest*/ }`
 - `template<class T> class SpscFifo { explicit SpscFifo(size_t capacityPow2); size_t push(const T*, size_t n); size_t pop(T*, size_t n); size_t available() const; }`
 
-- [ ] Write tests: TripleBuffer read returns last written value; reading twice without write returns same value; SpscFifo push/pop preserves order across wraparound; push returns fewer than n when full; threaded test: producer pushes 1e6 increasing ints, consumer checks order.
-- [ ] Configure: `cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release` (FetchContent JUCE, Catch2, IXWebSocket); build; tests fail to compile.
-- [ ] Implement both headers with `std::atomic` and acquire/release ordering.
-- [ ] `ctest --test-dir engine/build --output-on-failure` → PASS. Commit.
+- [x] Write tests: TripleBuffer read returns last written value; reading twice without write returns same value; SpscFifo push/pop preserves order across wraparound; push returns fewer than n when full; threaded test: producer pushes 1e6 increasing ints, consumer checks order.
+- [x] Configure: `cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release` (FetchContent JUCE, Catch2, IXWebSocket); build; tests fail to compile.
+- [x] Implement both headers with `std::atomic` and acquire/release ordering.
+- [x] `ctest --test-dir engine/build --output-on-failure` → PASS. Commit.
 
 ### Task 2: DSP blocks
 
@@ -91,8 +91,8 @@ app/
 - `struct Params { int numOut, numIn; OutputParams out[kMaxCh]; GeneratorParams gen; bool muteAll; }` with `kMaxCh = 64`
 - `OutputChain { void prepare(double sr, int maxBlock); void process(const OutputParams&, float* buf, int n, bool muteAll); float peak(); }`
 
-- [ ] Tests: pink noise octave-band energy slope −3 dB/oct ±1 dB from 63 Hz to 8 kHz; DelayLine integer delay is sample-exact for an impulse after crossfade settles; delay change produces no sample jump > 0.1 for a 100 Hz sine at 0.5 amplitude; limiter with 0 ms attack never exceeds threshold (+0.01 dB) on a +12 dB sine; OutputChain mute converges to exact 0 within 30 ms; polarity flips sign; gain −6 dB ≈ 0.501.
-- [ ] Run → FAIL. Implement. Run → PASS. Commit.
+- [x] Tests: pink noise octave-band energy slope −3 dB/oct ±1 dB from 63 Hz to 8 kHz; DelayLine integer delay is sample-exact for an impulse after crossfade settles; delay change produces no sample jump > 0.1 for a 100 Hz sine at 0.5 amplitude; limiter with 0 ms attack never exceeds threshold (+0.01 dB) on a +12 dB sine; OutputChain mute converges to exact 0 within 30 ms; polarity flips sign; gain −6 dB ≈ 0.501.
+- [x] Run → FAIL. Implement. Run → PASS. Commit.
 
 ### Task 3: Analyzer (transfer function, coherence, IR, delay finder)
 
@@ -104,8 +104,8 @@ app/
 - Delay finder: GCC-PHAT-free plain cross-spectrum IFFT over the last 65536 samples, peak with parabolic interpolation; recomputed every 1 s; TF uses reference delayed by the integer part.
 - `MicCal { bool load(const juce::File&, juce::String& err); float offsetDb(float hz) const; }` (log-frequency linear interpolation; flat outside range)
 
-- [ ] Tests (synthetic room): ref = pink noise; meas = ref delayed 480 samples × 0.5 → delay 480 ± 0.1, magnitude −6.02 ± 0.2 dB over 50 Hz–15 kHz, phase ≈ 0 ± 5° after delay compensation, coherence > 0.98. Fractional 480.5-sample delay (windowed-sinc) → 480.5 ± 0.1. Adding uncorrelated noise at equal level → mean coherence drops below 0.7. Meas = ref through a one-pole lowpass at 1 kHz → −3 dB ± 0.5 at 1 kHz. MicCal parses REW-style file with header lines and quotes, interpolates.
-- [ ] Run → FAIL. Implement. Run → PASS. Commit.
+- [x] Tests (synthetic room): ref = pink noise; meas = ref delayed 480 samples × 0.5 → delay 480 ± 0.1, magnitude −6.02 ± 0.2 dB over 50 Hz–15 kHz, phase ≈ 0 ± 5° after delay compensation, coherence > 0.98. Fractional 480.5-sample delay (windowed-sinc) → 480.5 ± 0.1. Adding uncorrelated noise at equal level → mean coherence drops below 0.7. Meas = ref through a one-pole lowpass at 1 kHz → −3 dB ± 0.5 at 1 kHz. MicCal parses REW-style file with header lines and quotes, interpolates.
+- [x] Run → FAIL. Implement. Run → PASS. Commit.
 
 ### Task 4: SystemState + JSON + validation + snapshots
 
@@ -118,8 +118,8 @@ app/
 - `Params toParams(const SystemState&)`
 - `Snapshots { explicit Snapshots(juce::File dir); juce::StringArray list(); bool save(name, const SystemState&); bool load(name, SystemState& out, juce::String& err); bool remove(name); void autosave(const SystemState&); bool loadAutosave(SystemState&); }` — writes to temp file then renames (atomic)
 
-- [ ] Tests: round-trip toVar/fromVar equality; patch valid path changes value; out-of-range value rejected and state unchanged; unknown path rejected; corrupt JSON snapshot load fails and leaves output untouched; generator level above cap rejected.
-- [ ] Run → FAIL. Implement. Run → PASS. Commit.
+- [x] Tests: round-trip toVar/fromVar equality; patch valid path changes value; out-of-range value rejected and state unchanged; unknown path rejected; corrupt JSON snapshot load fails and leaves output untouched; generator level above cap rejected.
+- [x] Run → FAIL. Implement. Run → PASS. Commit.
 
 ### Task 5: AudioEngine (device + callback)
 
@@ -132,8 +132,8 @@ app/
 - I/O latency used for acoustic delay = `cal` override for this device/sr/buffer if present, else driver-reported `getInputLatencyInSamples() + getOutputLatencyInSamples()`.
 - Device fault (removed / restarted): `faultMuted = true` — outputs forced silent until `unmuteAfterFault()`.
 
-- [ ] Tests using `processBlock` directly (no device): console input 0 routed to output 1 with mix 1.0 appears at output after unmute; faultMuted → silence; generator on output 0 only, level −20 dBFS → RMS within 1 dB of expected pink level after fade; mic + reference pushed to analyzer (delay finder recovers a synthetic 100-sample loop when output 0 is fed back to input 1 in the test harness).
-- [ ] Run → FAIL. Implement. Run → PASS. Commit.
+- [x] Tests using `processBlock` directly (no device): console input 0 routed to output 1 with mix 1.0 appears at output after unmute; faultMuted → silence; generator on output 0 only, level −20 dBFS → RMS within 1 dB of expected pink level after fade; mic + reference pushed to analyzer (delay finder recovers a synthetic 100-sample loop when output 0 is fed back to input 1 in the test harness).
+- [x] Run → FAIL. Implement. Run → PASS. Commit.
 
 ### Task 6: Server + main executable
 
@@ -143,10 +143,10 @@ app/
 
 **Events:** `state` (full state after every change), `status` (10 Hz: meters, cpu, xruns, latency, faultMuted), binary `TF` frames (type 1: n, freq[], mag[], phase[], coh[]; 15 Hz), binary `IR` frames (type 2: n, sr, delay, samples[]; 2 Hz).
 
-- [ ] Tests: `Dispatcher::handle(json)` returns ok for `state.get`; `state.patch` invalid → `ok:false` with message; `snapshot.save` then `snapshot.recall` restores a changed gain; unknown cmd → error.
-- [ ] Implement server with IXWebSocket on 127.0.0.1:`--port` (default 47800); all commands marshalled to the message thread via `MessageManager::callAsync`.
-- [ ] main: parse `--port`, `--data-dir`; load autosave; open device from state (outputs muted); run dispatch loop; SIGTERM/SIGINT → autosave + quit.
-- [ ] Build; run `VenueTunerEngine --port 47800` manually; `node -e` websocket smoke test `state.get`. Commit.
+- [x] Tests: `Dispatcher::handle(json)` returns ok for `state.get`; `state.patch` invalid → `ok:false` with message; `snapshot.save` then `snapshot.recall` restores a changed gain; unknown cmd → error.
+- [x] Implement server with IXWebSocket on 127.0.0.1:`--port` (default 47800); all commands marshalled to the message thread via `MessageManager::callAsync`.
+- [x] main: parse `--port`, `--data-dir`; load autosave; open device from state (outputs muted); run dispatch loop; SIGTERM/SIGINT → autosave + quit.
+- [x] Build; run `VenueTunerEngine --port 47800` manually; `node -e` websocket smoke test `state.get`. Commit.
 
 ### Task 7: UI foundation (engine client, plot, theme, status bar)
 
@@ -159,8 +159,8 @@ app/
 - `class Plot { constructor(canvas, opts: {yMin, yMax, yLabel, logX?:boolean}); setTraces(traces: Trace[]); draw(); }`
 - `mountStatusBar(el, engine)`
 
-- [ ] Tests: logX(20)=0, logX(20000)=width, logX(632.5)≈width/2; invLogX inverse; decodeBinary decodes a hand-built TF frame; freqTicks includes 100, 1k, 10k.
-- [ ] `npm test` → FAIL; implement; PASS. Commit.
+- [x] Tests: logX(20)=0, logX(20000)=width, logX(632.5)≈width/2; invLogX inverse; decodeBinary decodes a hand-built TF frame; freqTicks includes 100, 1k, 10k.
+- [x] `npm test` → FAIL; implement; PASS. Commit.
 
 ### Task 8: Windows — Measurement, Live/Tuning, Settings
 
@@ -169,7 +169,7 @@ app/
 - Measurement: magnitude / phase / coherence stacked plots, IR strip with delay readout (total, acoustic = total − calibrated I/O latency, in ms / samples / metres at 343 m/s), "apply delay to output" select+button, trace list (capture, show/hide, rename, delete, export CSV), generator panel (on/off, level, targets), mic & reference selector, averaging & smoothing selectors.
 - Live: output strips (name, meter, gain, mute, polarity, delay ms, limiter on/threshold, GR meter, latency budget), MUTE ALL, fault banner with "UNMUTE OUTPUTS", snapshots panel (save/recall/delete/export/import).
 - Settings: input device, output device, sample rate, buffer; input roles; routing matrix (console inputs × outputs, dB values); output names/colours; latency calibration (pick output + input, run, shows result); mic cal file path load.
-- [ ] `npm run build` succeeds (type-check). Manual check in browser via `npx vite` against running engine. Commit.
+- [x] `npm run build` succeeds (type-check). Manual check in browser via `npx vite` against running engine. Commit.
 
 ### Task 9: Electron shell
 
@@ -179,13 +179,13 @@ app/
 - Windows: Measurement (⌘1), Live/Tuning (⌘2), Settings (⌘,) — single instance each, loads `ui/dist/*.html`.
 - Menu: App (About, Settings ⌘,, Quit), Window (Measurement ⌘1, Live ⌘2), View (Reload, DevTools).
 - On quit: SIGTERM engine (autosave), wait 2 s.
-- [ ] `npm run app` from root opens both windows and engine. Commit.
+- [x] `npm run app` from root opens both windows and engine. Commit.
 
 ### Task 10: End-to-end verification
 
-- [ ] All engine and UI tests pass.
-- [ ] With BlackHole 16ch as in+out device: generator → out 1; mic input = BlackHole in 1 (loopback) → delay finder reports the BlackHole buffer latency; magnitude flat ±0.5 dB, coherence ≈ 1.
-- [ ] Latency calibration on BlackHole stores value; acoustic delay then reads ≈ 0.
-- [ ] Kill engine process → Electron restarts it, outputs muted, state restored.
-- [ ] Snapshot save / change gain / recall restores gain.
-- [ ] Manual (user, real hardware): interface + mic vs REW comparison.
+- [x] All engine and UI tests pass.
+- [x] With BlackHole 16ch as in+out device: generator → out 1; mic input = BlackHole in 1 (loopback) → delay finder reports the BlackHole buffer latency; magnitude flat ±0.5 dB, coherence ≈ 1.
+- [x] Latency calibration on BlackHole stores value; acoustic delay then reads ≈ 0.
+- [x] Kill engine process → Electron restarts it, outputs muted, state restored.
+- [x] Snapshot save / change gain / recall restores gain.
+- [ ] Manual (user, real hardware): interface + mic vs REW and Smaart comparison.

@@ -1,0 +1,12 @@
+{
+  "name": "venuetuner-workspace",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix ui install && npm --prefix app install",
+    "build:engine": "cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release && cmake --build engine/build -j 10",
+    "build:ui": "npm --prefix ui run build",
+    "build": "npm run build:engine && npm run build:ui",
+    "test": "engine/build/vt_tests && npm --prefix ui test",
+    "app": "npm run build:ui && npm --prefix app start"
+  }
+}
