@@ -3,7 +3,27 @@
 
 namespace vt {
 
+namespace {
+// Very short IRs (shorter than the convolution's head partition) behave oddly in JUCE's
+// non-uniform convolution; zero-padding is mathematically identical and avoids it.
+void padShort(juce::AudioBuffer<float>& b)
+{
+    constexpr int kMin = 64;
+    if (b.getNumSamples() >= kMin) return;
+    const int n = b.getNumSamples();
+    b.setSize(1, kMin, true, true);
+    b.clear(0, n, kMin - n);
+}
+}
+
 bool FirLoader::load(const juce::File& f, double engineSr, juce::AudioBuffer<float>& out, double& fileSr, juce::String& err)
+{
+    const bool ok = loadRaw(f, engineSr, out, fileSr, err);
+    if (ok) padShort(out);
+    return ok;
+}
+
+bool FirLoader::loadRaw(const juce::File& f, double engineSr, juce::AudioBuffer<float>& out, double& fileSr, juce::String& err)
 {
     if (!f.existsAsFile()) { err = "File not found: " + f.getFullPathName(); return false; }
     const auto ext = f.getFileExtension().toLowerCase();

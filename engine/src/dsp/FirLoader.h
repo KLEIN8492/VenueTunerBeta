@@ -11,6 +11,8 @@ struct FirLoader
     static constexpr int kMaxTaps = 65536;
     static bool load(const juce::File&, double engineSr, juce::AudioBuffer<float>& out, double& fileSr, juce::String& error);
     static int peakIndex(const juce::AudioBuffer<float>&);
+private:
+    static bool loadRaw(const juce::File&, double engineSr, juce::AudioBuffer<float>& out, double& fileSr, juce::String& error);
 };
 
 } // namespace vt

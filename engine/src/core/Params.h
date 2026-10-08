@@ -24,7 +24,8 @@ struct OutputParams
     float limReleaseMs = 100.0f;
     float mix[kMaxCh] {}; // linear gain from each physical input (resolved from program sources)
     Biquad iir[kMaxIir];  // identity = unused slot
-    bool firOn = false;
+    bool firOn = false;     // FIR in the signal path
+    bool firLoaded = false; // an IR is loaded: convolution keeps running so on/off can crossfade
 };
 
 enum class RefSource : uint8_t { Generator = 0, PhysicalInput = 1, ConsoleInput = 2 };

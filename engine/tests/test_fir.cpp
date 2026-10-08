@@ -16,7 +16,9 @@ TEST_CASE("FirLoader parses text and WAV, finds the peak")
     double fileSr = 0;
     juce::String err;
     REQUIRE(vt::FirLoader::load(txt, 48000, ir, fileSr, err));
-    CHECK(ir.getNumSamples() == 5);
+    CHECK(ir.getNumSamples() == 64); // 5 taps, zero-padded
+    CHECK(ir.getSample(0, 2) == 1.0f);
+    CHECK(ir.getSample(0, 40) == 0.0f);
     CHECK(fileSr == 48000);
     CHECK(vt::FirLoader::peakIndex(ir) == 2);
 
@@ -111,4 +113,43 @@ TEST_CASE("FIR convolution: delta delays exactly; random IR equals direct convol
         }
         CHECK(maxErr < 1e-4f);
     }
+}
+
+TEST_CASE("FIR on/off crossfades instead of jumping")
+{
+    juce::dsp::ConvolutionMessageQueue queue;
+    juce::dsp::Convolution conv(juce::dsp::Convolution::NonUniform { 256 }, queue);
+    vt::OutputChain chain;
+    chain.setConvolution(&conv);
+    chain.prepare(48000, 4096);
+    vt::OutputParams p {};
+    p.limiterOn = false;
+    p.firLoaded = true;
+    p.firOn = false;
+    juce::AudioBuffer<float> ir(1, 32);
+    ir.clear();
+    ir.setSample(0, 0, 0.25f); // wet = −12 dB copy of dry, no delay
+    conv.loadImpulseResponse(std::move(ir), 48000, juce::dsp::Convolution::Stereo::no,
+                             juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::no);
+    std::vector<float> buf(64);
+    float last = 1.0f; // carried across runs so a toggle is measured where it happens
+    auto run = [&](int blocks, float* maxJump) {
+        for (int b = 0; b < blocks; ++b) {
+            std::fill(buf.begin(), buf.end(), 1.0f);
+            chain.process(p, buf.data(), 64, false);
+            for (float y : buf) { if (maxJump) *maxJump = std::max(*maxJump, std::abs(y - last)); last = y; }
+        }
+        return last;
+    };
+    for (int i = 0; i < 2000 && conv.getCurrentIRSize() != 32; ++i) { run(1, nullptr); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    REQUIRE(conv.getCurrentIRSize() == 32);
+    CHECK_THAT(run(100, nullptr), WithinAbs(1.0, 1e-3)); // off: dry
+    p.firOn = true;
+    float jump = 0;
+    CHECK_THAT(run(100, &jump), WithinAbs(0.25, 1e-3)); // on: wet
+    CHECK(jump < 0.01f);                                 // 0.75 change spread over 30 ms
+    p.firOn = false;
+    jump = 0;
+    CHECK_THAT(run(100, &jump), WithinAbs(1.0, 1e-3));
+    CHECK(jump < 0.01f);
 }

@@ -17,7 +17,7 @@ namespace vt {
 class OutputChain
 {
 public:
-    void prepare(double sr, int /*maxBlock*/)
+    void prepare(double sr, int maxBlock)
     {
         sampleRate = sr;
         delay.prepare(sr, int(sr)); // up to 1 s
@@ -26,6 +26,9 @@ public:
         muteGain.reset(sr, 0.02);
         gain.setCurrentAndTargetValue(0.0f);
         muteGain.setCurrentAndTargetValue(0.0f);
+        firMix.reset(sr, 0.03);
+        firMix.setCurrentAndTargetValue(0.0f);
+        wetBuf.assign(size_t(std::max(maxBlock, 1)), 0.0f);
         for (int k = 0; k < kMaxIir; ++k) { cur[k] = target[k] = Biquad::identity(); state[k].reset(); }
         rampLeft = 0;
         if (conv) conv->prepare({ sr, juce::uint32(4096), 1 });
@@ -62,11 +65,20 @@ public:
             }
             buf[i] = float(y);
         }
-        // Pass 2: FIR (block-based convolution)
-        if (p.firOn && conv != nullptr) {
-            float* chans[1] = { buf };
+        // Pass 2: FIR. While an IR is loaded the convolution always runs, so switching it on
+        // or off is a 30 ms dry/wet crossfade rather than a jump into a cold convolution.
+        firMix.setTargetValue(p.firOn ? 1.0f : 0.0f);
+        if ((p.firLoaded || p.firOn) && conv != nullptr) { // "on" implies "loaded"
+            float* wet = wetBuf.data();
+            std::copy(buf, buf + n, wet);
+            float* chans[1] = { wet };
             juce::dsp::AudioBlock<float> block(chans, 1, size_t(n));
             conv->process(juce::dsp::ProcessContextReplacing<float>(block));
+            if (!firMix.isSmoothing() && firMix.getTargetValue() == 1.0f) std::copy(wet, wet + n, buf);
+            else if (firMix.isSmoothing())
+                for (int i = 0; i < n; ++i) { const float m = firMix.getNextValue(); buf[i] += m * (wet[i] - buf[i]); }
+        } else {
+            firMix.setCurrentAndTargetValue(0.0f);
         }
         // Pass 3: limiter → mute
         float pk = 0.0f;
@@ -139,6 +151,8 @@ private:
     bool active[kMaxIir] {};
     int rampLeft = 0;
     juce::dsp::Convolution* conv = nullptr;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> firMix;
+    std::vector<float> wetBuf; // allocated in prepare
 
     double sampleRate = 48000.0;
     DelayLine delay;

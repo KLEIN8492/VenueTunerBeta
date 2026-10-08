@@ -515,6 +515,7 @@ Params toParams(const SystemState& s, double sampleRate)
         }
         designOutputIir(c, sampleRate, q.iir);
         q.firOn = c.fir.on && c.fir.taps > 0;
+        q.firLoaded = c.fir.taps > 0;
     }
     for (const auto& src : s.sources)
         if (src.type == "program" && src.channel >= 0 && src.channel < kMaxCh) p.consoleInputs |= (1ull << src.channel);
