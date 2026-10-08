@@ -9,14 +9,16 @@ namespace vt {
 class Limiter
 {
 public:
-    void prepare(double sr) { sampleRate = sr; updateCoefs(); gain = 1.0f; }
+    void prepare(double sr) { sampleRate = sr; updateCoefs(); gain = 1.0f; minGain = 1.0f; }
 
     void set(float thresholdDb, float attackMs, float releaseMs, bool isEnabled)
     {
+        enabled = isEnabled;
+        if (thresholdDb == lastThreshDb && attackMs == attack && releaseMs == release) return; // called every block
+        lastThreshDb = thresholdDb;
         threshold = std::pow(10.0f, thresholdDb / 20.0f);
         attack = attackMs;
         release = releaseMs;
-        enabled = isEnabled;
         updateCoefs();
     }
 
@@ -49,7 +51,7 @@ private:
     }
 
     double sampleRate = 48000.0;
-    float threshold = 1.0f, attack = 0.0f, release = 50.0f;
+    float threshold = 1.0f, attack = 0.0f, release = 50.0f, lastThreshDb = 0.0f;
     float attackCoef = 1.0f, releaseCoef = 0.001f;
     float gain = 1.0f, minGain = 1.0f;
     bool enabled = false;

@@ -44,13 +44,22 @@ public:
         limiter.set(p.limThreshDb, p.limAttackMs, p.limReleaseMs, p.limiterOn);
 
         startRampIfChanged(p);
+        if (rampLeft == 0)
+            for (int k = 0; k < kMaxIir; ++k) active[k] = !cur[k].isIdentity();
 
-        // Pass 1: gain · polarity → delay → IIR bank
+        // Pass 1: gain · polarity → delay → IIR bank. Sample-outer on purpose: an IIR section
+        // is a recurrence, and running all sections per sample lets the CPU overlap section
+        // k of sample i+1 with section k+1 of sample i (a section-outer loop was 3× slower).
+        int list[kMaxIir], count = 0;
+        for (int k = 0; k < kMaxIir; ++k)
+            if (active[k]) list[count++] = k;
         for (int i = 0; i < n; ++i) {
             double y = delay.process(buf[i] * gain.getNextValue());
-            if (rampLeft > 0) stepRamp();
-            for (int k = 0; k < kMaxIir; ++k)
-                if (active[k]) y = state[k].process(cur[k], y);
+            if (rampLeft > 0) stepRamp(list, count);
+            for (int j = 0; j < count; ++j) {
+                const int k = list[j];
+                y = state[k].process(cur[k], y);
+            }
             buf[i] = float(y);
         }
         // Pass 2: FIR (block-based convolution)
@@ -108,20 +117,19 @@ private:
         rampLeft = kRamp;
     }
 
-    void stepRamp()
+    void stepRamp(const int* list, int count)
     {
         if (--rampLeft == 0) {
             for (int k = 0; k < kMaxIir; ++k) {
                 cur[k] = target[k]; // land exactly on the target
-                active[k] = !cur[k].isIdentity();
-                if (!active[k]) state[k].reset();
+                if (cur[k].isIdentity()) state[k].reset();
+                // `active` is updated at the next block; an identity section is harmless until then.
             }
             return;
         }
-        for (int k = 0; k < kMaxIir; ++k) {
-            if (!active[k]) continue;
-            auto& c = cur[k];
-            const auto& d = step[k];
+        for (int j = 0; j < count; ++j) {
+            auto& c = cur[list[j]];
+            const auto& d = step[list[j]];
             c.b0 += d.b0; c.b1 += d.b1; c.b2 += d.b2; c.a1 += d.a1; c.a2 += d.a2;
         }
     }
