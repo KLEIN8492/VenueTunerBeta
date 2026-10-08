@@ -92,6 +92,9 @@ bool Analyzer::process()
     }
 
     // Consume ref and meas in lock-step (the audio thread always pushes both).
+    if (const int64_t len = sweepRequest.exchange(0); len > 0)
+        analyseSweep(std::min<int64_t>(len, std::min<int64_t>(total, kHistory)));
+
     const size_t n = std::min(refFifo.available(), measFifo.available());
     if (n == 0) return false;
     size_t done = 0;
@@ -159,7 +162,7 @@ void Analyzer::findDelay()
     }
     const double rms = std::sqrt(sumSq / L);
     const double pk = std::abs(ir[peak]);
-    if (pk < 10.0 * rms) { delayValid = false; return; } // no clear arrival: keep waiting
+    if (!(pk > 0.0) || pk < 10.0 * rms) { delayValid = false; return; } // silence or no clear arrival
 
     const double a = std::abs(ir[(peak - 1 + M) % M]), b = pk, c = std::abs(ir[peak + 1]);
     const double denom = a - 2 * b + c;
@@ -261,6 +264,104 @@ void Analyzer::buildResult()
     }
     std::lock_guard<std::mutex> l(resultLock);
     latest = std::move(r);
+}
+
+} // namespace vt
+
+namespace vt {
+
+// REW-style sweep analysis: regularised deconvolution over the whole capture → impulse
+// response → window around the arrival (−10 ms … +500 ms) → transfer function.
+void Analyzer::analyseSweep(int64_t len)
+{
+    int order = 1;
+    while ((int64_t(1) << order) < 2 * len) ++order;
+    const int M = 1 << order;
+    juce::dsp::FFT f(order);
+    std::vector<float> X(size_t(2 * M), 0.0f), Y(size_t(2 * M), 0.0f);
+    const int64_t start = total - len;
+    for (int64_t i = 0; i < len; ++i) {
+        X[size_t(i)] = hist(refHist, start + i);
+        Y[size_t(i)] = hist(measHist, start + i);
+    }
+    f.performRealOnlyForwardTransform(X.data());
+    f.performRealOnlyForwardTransform(Y.data());
+    auto* Xc = reinterpret_cast<cfloat*>(X.data());
+    auto* Yc = reinterpret_cast<cfloat*>(Y.data());
+    double maxPow = 0;
+    for (int k = 0; k <= M / 2; ++k) maxPow = std::max(maxPow, double(std::norm(Xc[k])));
+    if (maxPow <= 0) return;
+    const double eps = 1e-6 * maxPow; // −60 dB: outside the swept band H → 0
+    for (int k = 0; k <= M / 2; ++k) {
+        const cfloat h = Yc[k] * std::conj(Xc[k]) / float(std::norm(Xc[k]) + eps);
+        Yc[k] = h;
+        if (k > 0 && k < M / 2) Yc[M - k] = std::conj(h);
+    }
+    f.performRealOnlyInverseTransform(Y.data());
+    const float* ir = Y.data();
+
+    int peak = 0;
+    for (int k = 0; k < M / 2; ++k)
+        if (std::abs(ir[k]) > std::abs(ir[peak])) peak = k;
+    const double a = std::abs(ir[(peak - 1 + M) % M]), b = std::abs(ir[peak]), c = std::abs(ir[peak + 1]);
+    const double den = a - 2 * b + c;
+    const double d = peak + (std::abs(den) > 1e-12 ? std::clamp(0.5 * (a - c) / den, -0.5, 0.5) : 0.0);
+
+    // Window: 10 ms raised-cosine fade-in before the peak, flat to +450 ms, 50 ms fade-out.
+    const int pre = int(0.01 * sr), post = int(0.5 * sr), fadeOut = int(0.05 * sr);
+    int wOrder = 1;
+    while ((1 << wOrder) < 2 * (pre + post)) ++wOrder;
+    const int W = 1 << wOrder;
+    juce::dsp::FFT wf(wOrder);
+    std::vector<float> w(size_t(2 * W), 0.0f);
+    for (int i = -pre; i < post; ++i) {
+        double g = 1.0;
+        if (i < 0) g = 0.5 - 0.5 * std::cos(M_PI * double(i + pre) / pre);
+        else if (i > post - fadeOut) g = 0.5 + 0.5 * std::cos(M_PI * double(i - (post - fadeOut)) / fadeOut);
+        // Store with the peak at index 0 (wrap negatives) so the phase is relative to the arrival.
+        w[size_t((i + W) % W)] = float(g * ir[(peak + i + M) % M]);
+    }
+    wf.performRealOnlyForwardTransform(w.data());
+    const auto* H = reinterpret_cast<const cfloat*>(w.data());
+
+    Result r;
+    r.sampleRate = float(sr);
+    r.delaySamples = d;
+    r.delayValid = true;
+    r.frames = 1;
+    const double df = sr / W, frac = d - peak;
+    const int sm = smoothing.load();
+    const double halfBand = sm > 0 ? 0.5 / sm : 1.0 / 96.0;
+    MicCal cal_;
+    { std::lock_guard<std::mutex> l(calLock); cal_ = cal; }
+    for (int i = 0;; ++i) {
+        const double fr = 20.0 * std::pow(2.0, i / 48.0);
+        if (fr > 20000.0) break;
+        int k0 = int(std::ceil(fr * std::pow(2.0, -halfBand) / df)), k1 = int(std::floor(fr * std::pow(2.0, halfBand) / df));
+        if (k1 < k0) k0 = k1 = int(std::lround(fr / df));
+        k0 = std::clamp(k0, 1, W / 2); k1 = std::clamp(k1, k0, W / 2);
+        std::complex<double> h;
+        double p = 0;
+        for (int k = k0; k <= k1; ++k) {
+            const auto v = std::complex<double>(H[k]) * std::polar(1.0, 2.0 * kPi * (k * df) * frac / sr);
+            h += v;
+            p += std::norm(v);
+        }
+        const double n = k1 - k0 + 1;
+        // Power average for magnitude (no cancellation), complex average for phase.
+        r.freq.push_back(float(fr));
+        r.magDb.push_back(float(10.0 * std::log10(std::max(p / n, 1e-18))) - cal_.offsetDb(float(fr)));
+        r.phaseDeg.push_back(float(std::arg(h) * 180.0 / kPi));
+        r.coherence.push_back(1.0f);
+    }
+    r.irStart = std::max(0, peak - pre);
+    r.ir.assign(size_t(pre + post), 0.0f);
+    for (int i = 0; i < pre + post; ++i) r.ir[size_t(i)] = ir[(r.irStart + i) % M];
+    {
+        std::lock_guard<std::mutex> l(resultLock);
+        sweep = std::move(r);
+    }
+    sweepGen.fetch_add(1);
 }
 
 } // namespace vt

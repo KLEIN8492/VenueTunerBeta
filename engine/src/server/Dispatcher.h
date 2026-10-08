@@ -3,6 +3,7 @@
 #include "core/SystemState.h"
 #include "measure/MicCal.h"
 #include "server/Snapshots.h"
+#include "measure/Align.h"
 #include <array>
 #include <functional>
 
@@ -45,6 +46,14 @@ private:
     juce::var openDevice(const DeviceConfig&, juce::String& error);
     juce::var startLatencyCalibration(int output, int input, juce::String& error);
     void finishCalibration(bool ok, double samples, const juce::String& message);
+    juce::var startSweep(double seconds, juce::String& error);
+    juce::var startAutoAlign(const juce::var& outputs, int reference, juce::String& error);
+    void tickSweep();
+    void tickAlign();
+    void finishAlign(const juce::String& error);
+    void emit(const juce::String& event, std::initializer_list<std::pair<const char*, juce::var>> fields);
+    juce::String preflight(); // why automatic measurement can't run now, or empty
+    void applyTransient(Params&) const; // sweep / auto-align generator overrides
     void timerCallback() override;
 
     AudioEngine& engine;
@@ -64,6 +73,28 @@ private:
     } calib;
     int calibOutput = 0;
     std::array<juce::String, kMaxCh> loadedFir; // path currently in each convolution
+
+    struct Sweep
+    {
+        bool active = false, analysing = false;
+        uint32_t id = 0;
+        int64_t length = 0;
+        double startedMs = 0, seconds = 0;
+        int generation = 0;
+    } sweepJob;
+    uint32_t sweepCounter = 0;
+
+    struct Align
+    {
+        bool active = false;
+        std::vector<int> outputs;
+        size_t index = 0;
+        int reference = -1;
+        int ticks = 0, stable = 0;
+        double last = -1;
+        std::vector<Arrival> arrivals;
+        juce::String beforeName;
+    } alignJob;
 };
 
 } // namespace vt

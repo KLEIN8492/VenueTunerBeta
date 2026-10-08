@@ -112,6 +112,10 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         return t;
     }
 
+    if (cmd == "measure.sweep") return startSweep(args.hasProperty("seconds") ? double(args["seconds"]) : 3.0, err);
+    if (cmd == "align.auto") return startAutoAlign(args["outputs"], args.hasProperty("reference") ? int(args["reference"]) : -1, err);
+    if (cmd == "align.cancel") { if (alignJob.active) finishAlign("cancelled"); return true; }
+
     if (cmd == "fir.load") {
         const int o = int(args["output"]);
         if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
@@ -248,7 +252,10 @@ void Dispatcher::syncFirs()
 void Dispatcher::commit(bool measureChanged)
 {
     syncFirs();
-    engine.setParams(toParams(state, sampleRate()));
+    auto p = toParams(state, sampleRate());
+    applyTransient(p);
+    engine.setParams(p);
+    engine.analyzer().setMultiWindow(state.measure.multiWindow);
     engine.analyzer().setAveraging(state.measure.averaging);
     engine.analyzer().setSmoothing(state.measure.smoothing);
     if (measureChanged) engine.analyzer().reset();
@@ -302,6 +309,8 @@ void Dispatcher::finishCalibration(bool ok, double samples, const juce::String& 
 
 void Dispatcher::timerCallback()
 {
+    if (sweepJob.active) tickSweep();
+    if (alignJob.active) tickAlign();
     if (calib.active) {
         ++calib.ticks;
         const auto r = engine.analyzer().result();
@@ -344,6 +353,8 @@ juce::var Dispatcher::statusVar()
     set(v, "ioLatency", lat.samples);
     set(v, "ioLatencyCalibrated", lat.calibrated);
     set(v, "calibrating", calib.active);
+    set(v, "sweeping", sweepJob.active);
+    set(v, "aligning", alignJob.active);
     juce::Array<juce::var> inPk, outPk, gr;
     for (int c = 0; c < st.numIn; ++c) inPk.add(st.inPeak[size_t(c)]);
     for (int c = 0; c < st.numOut; ++c) { outPk.add(st.outPeak[size_t(c)]); gr.add(st.limGrDb[size_t(c)]); }
@@ -351,6 +362,164 @@ juce::var Dispatcher::statusVar()
     set(v, "outPeak", outPk);
     set(v, "limGr", gr);
     return v;
+}
+
+} // namespace vt
+
+namespace vt {
+
+void Dispatcher::emit(const juce::String& event, std::initializer_list<std::pair<const char*, juce::var>> fields)
+{
+    if (!onEvent) return;
+    auto e = object();
+    set(e, "event", event);
+    for (auto& [k, v] : fields) set(e, k, v);
+    onEvent(e);
+}
+
+juce::String Dispatcher::preflight()
+{
+    const auto st = engine.status();
+    if (st.faultMuted || st.muteAll) return "outputs are muted: unmute first";
+    if (state.measure.micInput < 0) return "choose a measurement mic first";
+    if (calib.active || sweepJob.active || alignJob.active) return "another automatic measurement is running";
+    return {};
+}
+
+void Dispatcher::applyTransient(Params& p) const
+{
+    if (sweepJob.active && !sweepJob.analysing) {
+        p.gen.on = true;
+        p.gen.mode = GeneratorParams::Sweep;
+        p.gen.sweepId = sweepJob.id;
+        p.gen.sweepLength = sweepJob.length;
+    }
+    if (alignJob.active && alignJob.index < alignJob.outputs.size()) {
+        p.gen.on = true;
+        p.gen.mode = GeneratorParams::Pink;
+        p.gen.targets = 1ull << alignJob.outputs[alignJob.index];
+    }
+}
+
+// ---------------------------------------------------------------- log sweep
+juce::var Dispatcher::startSweep(double seconds, juce::String& err)
+{
+    if (err = preflight(); err.isNotEmpty()) return {};
+    if (state.gen.targets.empty()) { err = "choose generator outputs first"; return {}; }
+    sweepJob = {};
+    sweepJob.active = true;
+    sweepJob.seconds = std::clamp(seconds, 1.0, 8.0);
+    sweepJob.length = int64_t(sweepJob.seconds * sampleRate());
+    sweepJob.id = ++sweepCounter;
+    sweepJob.startedMs = juce::Time::getMillisecondCounterHiRes();
+    sweepJob.generation = engine.analyzer().sweepGeneration();
+    commit();
+    return "started";
+}
+
+void Dispatcher::tickSweep()
+{
+    const double elapsed = (juce::Time::getMillisecondCounterHiRes() - sweepJob.startedMs) / 1000.0;
+    if (!sweepJob.analysing && elapsed > sweepJob.seconds + 1.5) {
+        // Sweep + 1.5 s of tail (room decay, latency) is in the analyzer history now.
+        sweepJob.analysing = true;
+        commit(); // generator back to normal
+        engine.analyzer().requestSweep(int64_t((elapsed + 0.25) * sampleRate()));
+        return;
+    }
+    if (sweepJob.analysing && engine.analyzer().sweepGeneration() != sweepJob.generation) {
+        sweepJob.active = false;
+        const auto r = engine.analyzer().sweepResult();
+        auto toArr = [](const std::vector<float>& v) { juce::Array<juce::var> a; for (float x : v) a.add(x); return juce::var(a); };
+        auto t = object();
+        set(t, "name", "Sweep " + juce::Time::getCurrentTime().formatted("%H:%M:%S"));
+        set(t, "freq", toArr(r.freq));
+        set(t, "mag", toArr(r.magDb));
+        set(t, "phase", toArr(r.phaseDeg));
+        set(t, "coh", toArr(r.coherence));
+        set(t, "delaySamples", r.delaySamples);
+        set(t, "sampleRate", r.sampleRate);
+        emit("sweep", { { "ok", true }, { "trace", t } });
+        commit();
+    } else if (elapsed > sweepJob.seconds + 10) {
+        sweepJob.active = false;
+        emit("sweep", { { "ok", false }, { "message", "sweep analysis timed out" } });
+        commit();
+    }
+}
+
+// ---------------------------------------------------------------- auto delay alignment
+juce::var Dispatcher::startAutoAlign(const juce::var& outs, int reference, juce::String& err)
+{
+    if (err = preflight(); err.isNotEmpty()) return {};
+    std::vector<int> list;
+    if (auto* a = outs.getArray())
+        for (auto& v : *a)
+            if (int(v) >= 0 && int(v) < int(state.outputs.size())) list.push_back(int(v));
+    if (list.size() < 2) { err = "choose at least two outputs to align"; return {}; }
+    alignJob = {};
+    alignJob.active = true;
+    alignJob.outputs = list;
+    alignJob.reference = reference;
+    alignJob.beforeName = "Before auto-align " + juce::Time::getCurrentTime().formatted("%H-%M-%S");
+    snapshots.save(alignJob.beforeName, state, err);
+    err = {};
+    engine.analyzer().reset();
+    commit();
+    emit("align", { { "stage", "measuring" }, { "output", list[0] } });
+    return "started";
+}
+
+void Dispatcher::tickAlign()
+{
+    ++alignJob.ticks;
+    const auto r = engine.analyzer().result();
+    if (r.delayValid && alignJob.ticks > 4) { // let the reset settle (~1 s)
+        alignJob.stable = std::abs(r.delaySamples - alignJob.last) < 0.05 ? alignJob.stable + 1 : 0;
+        alignJob.last = r.delaySamples;
+    }
+    const int out = alignJob.outputs[alignJob.index];
+    if (alignJob.stable >= 3) {
+        const auto lat = currentLatency();
+        const double io = state.measure.ref == "generator" ? lat.samples : 0.0;
+        const double arrivalMs = (r.delaySamples - io) * 1000.0 / r.sampleRate;
+        alignJob.arrivals.push_back({ out, arrivalMs, state.outputs[size_t(out)].delayMs });
+        emit("align", { { "stage", "measured" }, { "output", out }, { "arrivalMs", arrivalMs } });
+        if (++alignJob.index >= alignJob.outputs.size()) { finishAlign({}); return; }
+        alignJob.ticks = alignJob.stable = 0;
+        alignJob.last = -1;
+        engine.analyzer().reset();
+        commit();
+        emit("align", { { "stage", "measuring" }, { "output", alignJob.outputs[alignJob.index] } });
+    } else if (alignJob.ticks > 40) {
+        finishAlign("no clear arrival on output " + juce::String(out + 1) + ": check the mic and the speaker");
+    }
+}
+
+void Dispatcher::finishAlign(const juce::String& error)
+{
+    const auto arrivals = alignJob.arrivals;
+    const int reference = alignJob.reference;
+    alignJob.active = false;
+    if (error.isNotEmpty()) {
+        commit();
+        emit("align", { { "stage", "error" }, { "message", error } });
+        return;
+    }
+    juce::Array<juce::var> result;
+    for (auto& d : computeAlignment(arrivals, reference)) {
+        state.outputs[size_t(d.output)].delayMs = float(std::round(d.delayMs * 1000.0) / 1000.0);
+        auto o = object();
+        set(o, "output", d.output);
+        set(o, "delayMs", d.delayMs);
+        result.add(o);
+    }
+    const auto name = "Auto-align " + juce::Time::getCurrentTime().formatted("%H-%M-%S");
+    juce::String err;
+    snapshots.save(name, state, err);
+    engine.analyzer().reset();
+    commit();
+    emit("align", { { "stage", "done" }, { "delays", result }, { "snapshot", name } });
 }
 
 } // namespace vt

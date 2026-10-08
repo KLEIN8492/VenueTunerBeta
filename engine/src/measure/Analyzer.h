@@ -50,11 +50,17 @@ public:
     void setMicCal(const MicCal& c) { std::lock_guard<std::mutex> l(calLock); cal = c; }
 
     Result result() const { std::lock_guard<std::mutex> l(resultLock); return latest; }
+
+    // Sweep capture: deconvolve the last `lengthSamples` of history (the whole sweep plus
+    // tail) on the analysis thread. When done, sweepGeneration() increments.
+    void requestSweep(int64_t lengthSamples) { sweepRequest.store(lengthSamples); }
+    int sweepGeneration() const { return sweepGen.load(); }
+    Result sweepResult() const { std::lock_guard<std::mutex> l(resultLock); return sweep; }
     double delaySamples() const { return delayTotal.load(); }
 
     static constexpr int kFixedOrder = 14;             // fixed mode: 16384 points
     static constexpr int kDelayOrder = 16;             // delay finder block: 65536
-    static constexpr int kHistory = 1 << 19;           // ~10.9 s at 48 kHz
+    static constexpr int kHistory = 1 << 20;           // ~21.8 s at 48 kHz, 10.9 s at 96 kHz
 
 private:
     void doReset();
@@ -75,6 +81,7 @@ private:
     void configureBands();
     void addFrame(Band&, int64_t frameEnd);
     void buildResult();
+    void analyseSweep(int64_t length);
     float hist(const std::vector<float>& h, int64_t index) const { return h[size_t(index) & (kHistory - 1)]; }
 
     double sr = 48000.0;
@@ -100,7 +107,9 @@ private:
     mutable std::mutex calLock;
     MicCal cal;
     mutable std::mutex resultLock;
-    Result latest;
+    Result latest, sweep;
+    std::atomic<int64_t> sweepRequest { 0 };
+    std::atomic<int> sweepGen { 0 };
 };
 
 } // namespace vt

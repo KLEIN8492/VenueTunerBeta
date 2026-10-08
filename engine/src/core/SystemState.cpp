@@ -262,6 +262,7 @@ juce::var toVar(const SystemState& s)
     m.getDynamicObject()->setProperty("refInput", s.measure.refInput);
     m.getDynamicObject()->setProperty("averaging", s.measure.averaging);
     m.getDynamicObject()->setProperty("smoothing", s.measure.smoothing);
+    m.getDynamicObject()->setProperty("multiWindow", s.measure.multiWindow);
     r->setProperty("measure", m);
 
     auto c = obj();
@@ -319,7 +320,8 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
               && r.str("ref", s.measure.ref, { "generator", "input" })
               && r.integer("refInput", s.measure.refInput, -1, kMaxCh - 1)
               && r.integer("averaging", s.measure.averaging, 1, 256)
-              && r.integer("smoothing", s.measure.smoothing, 0, 48))) return false;
+              && r.integer("smoothing", s.measure.smoothing, 0, 48)
+              && r.boolean("multiWindow", s.measure.multiWindow))) return false;
     }
     if (v.hasProperty("cal")) {
         const auto& c = v["cal"];

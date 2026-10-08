@@ -131,6 +131,7 @@ void AudioEngine::prepareForTest(double sr, int block, int, int) { prepare(sr, b
 
 void AudioEngine::prepare(double sr, int block)
 {
+    currentSr = sr;
     const int maxBlock = std::max(block, 4096);
     for (auto& c : chains) c.prepare(sr, maxBlock);
     genBuf.assign(size_t(maxBlock), 0.0f);
@@ -183,12 +184,24 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
     const Params& p = params.read();
     const bool silence = muteAll.load(std::memory_order_relaxed) || faultMuted.load(std::memory_order_relaxed);
 
-    // Generator (pink noise, unit RMS) with a smooth fade in/out.
-    const float genTarget = p.gen.on ? std::pow(10.0f, std::min(p.gen.levelDb, kGeneratorMaxDb) / 20.0f) : kGenFloor;
-    genGain.setTargetValue(genTarget);
-    for (int i = 0; i < n; ++i) {
-        const float g = genGain.getNextValue();
-        genBuf[size_t(i)] = g <= kGenFloor * 1.0001f ? 0.0f : pink.next() * g;
+    const float level = std::pow(10.0f, std::min(p.gen.levelDb, kGeneratorMaxDb) / 20.0f);
+    if (p.gen.on && p.gen.mode == GeneratorParams::Sweep) {
+        // Log sweep, played once per sweepId. Level is RMS, so peak = level · √2.
+        if (p.gen.sweepId != lastSweepId) {
+            lastSweepId = p.gen.sweepId;
+            sweepPos = 0;
+            sweep.sr = currentSr;
+            sweep.length = p.gen.sweepLength;
+        }
+        for (int i = 0; i < n; ++i) genBuf[size_t(i)] = sweep.sample(sweepPos++) * level * 1.41421356f;
+        genGain.setCurrentAndTargetValue(kGenFloor); // pink noise fades in again afterwards
+    } else {
+        // Pink noise (unit RMS) with a smooth fade in/out.
+        genGain.setTargetValue(p.gen.on ? level : kGenFloor);
+        for (int i = 0; i < n; ++i) {
+            const float g = genGain.getNextValue();
+            genBuf[size_t(i)] = g <= kGenFloor * 1.0001f ? 0.0f : pink.next() * g;
+        }
     }
 
     for (int c = 0; c < numIn && c < kMaxCh; ++c) {

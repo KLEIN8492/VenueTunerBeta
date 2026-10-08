@@ -79,6 +79,7 @@ struct MeasureConfig
     int refInput = -1;
     int averaging = 16;
     int smoothing = 24; // 1/N octave, 0 = none
+    bool multiWindow = true;
 };
 
 struct CalibrationData

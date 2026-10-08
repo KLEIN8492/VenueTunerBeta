@@ -28,7 +28,11 @@ enum class RefSource : uint8_t { Generator = 0, PhysicalInput = 1, ConsoleInput 
 
 struct GeneratorParams
 {
+    enum Mode : uint8_t { Pink = 0, Sweep = 1 };
     bool on = false;
+    Mode mode = Pink;
+    int64_t sweepLength = 0; // samples
+    uint32_t sweepId = 0;    // a new id (re)starts the sweep once
     float levelDb = -40.0f;   // dBFS RMS
     uint64_t targets = 0;     // bitmask of outputs
 };

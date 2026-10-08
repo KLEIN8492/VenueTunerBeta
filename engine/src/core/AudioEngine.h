@@ -3,6 +3,7 @@
 #include "core/SystemState.h"
 #include "dsp/OutputChain.h"
 #include "dsp/PinkNoise.h"
+#include "dsp/SweepGen.h"
 #include "measure/Analyzer.h"
 #include "rt/TripleBuffer.h"
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -81,6 +82,10 @@ private:
     juce::dsp::ConvolutionMessageQueue convQueue;
     std::array<std::unique_ptr<juce::dsp::Convolution>, kMaxCh> convs;
     PinkNoise pink;
+    SweepGen sweep;
+    int64_t sweepPos = 0;
+    uint32_t lastSweepId = 0;
+    double currentSr = 48000.0;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> genGain;
     std::vector<float> genBuf, mixBuf, zeroBuf;
     std::atomic<bool> muteAll { false }, faultMuted { true };

@@ -4,6 +4,7 @@
 #include "measure/Analyzer.h"
 #include "measure/MicCal.h"
 #include "dsp/PinkNoise.h"
+#include "dsp/SweepGen.h"
 #include <juce_core/juce_core.h>
 #include <cmath>
 #include <deque>
@@ -153,4 +154,40 @@ TEST_CASE("Multi-time-window rejects a late reflection in the highs")
     auto rf = runRoom(fixed, room(), 8.0);
     CHECK(rippleDb(rm, 5000, 15000) < 1.5f);
     CHECK(rippleDb(rf, 5000, 15000) > 6.0f);
+}
+
+TEST_CASE("Log sweep capture recovers delay and gain at full resolution")
+{
+    vt::SweepGen sweep { kSr, int64_t(3 * kSr) };
+    DelayGain room(480, 0.5f);
+    vt::Analyzer an;
+    an.prepare(kSr);
+    an.setSmoothing(48);
+    const int block = 512;
+    const int64_t totalLen = sweep.length + int64_t(2 * kSr);
+    std::vector<float> ref(block), meas(block);
+    for (int64_t pos = -int64_t(0.5 * kSr); pos < totalLen; pos += block) {
+        for (int i = 0; i < block; ++i) { ref[size_t(i)] = sweep.sample(pos + i); meas[size_t(i)] = room(ref[size_t(i)]); }
+        an.pushRef(ref.data(), block);
+        an.pushMeas(meas.data(), block);
+        an.process();
+    }
+    an.requestSweep(totalLen);
+    an.process();
+    REQUIRE(an.sweepGeneration() == 1);
+    auto r = an.sweepResult();
+    CHECK_THAT(r.delaySamples, WithinAbs(480.0, 0.1));
+    for (size_t i = 0; i < r.freq.size(); ++i)
+        if (r.freq[i] > 30 && r.freq[i] < 16000) {
+            CHECK_THAT(r.magDb[i], WithinAbs(-6.02, 0.3));
+            CHECK_THAT(r.phaseDeg[i], WithinAbs(0.0, 5.0));
+        }
+}
+
+TEST_CASE("Silent measurement input never yields a valid delay")
+{
+    vt::Analyzer an;
+    an.prepare(kSr);
+    runRoom(an, [](float) { return 0.0f; }, 4.0);
+    CHECK_FALSE(an.result().delayValid);
 }
