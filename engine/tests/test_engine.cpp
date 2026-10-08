@@ -139,3 +139,16 @@ TEST_CASE("Outputs write to their patched physical channel; the rest stays silen
     CHECK(h.out[1].back() == 0.0f);
     CHECK(h.out[2].back() == 0.0f);
 }
+
+TEST_CASE("Silence after signal does not leave denormals in the output")
+{
+    Harness h;
+    h.state.outputs[0].mix[0] = 1.0f;
+    h.state.outputs[0].hp = { "lr48", 30 };   // long low-frequency decay
+    h.state.outputs[0].lp = { "lr48", 80 };
+    h.apply();
+    h.engine.unmuteAfterFault();
+    h.run(500, 0.5f);
+    h.run(20000, 0.0f); // ~27 s of silence: states decay towards zero
+    for (float y : h.out[0]) CHECK((y == 0.0f || std::fpclassify(y) == FP_NORMAL));
+}

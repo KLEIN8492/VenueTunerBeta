@@ -70,7 +70,13 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         if (cmd == "state.patch") patches.add(args);
         else if (auto* a = args["patches"].getArray()) patches = *a;
         SystemState next = state;
-        bool measureChanged = false;
+        bool measureChanged = false, tuning = false;
+        juce::String key;
+        for (auto& p : patches) {
+            const auto path = p["path"].toString();
+            if (path.startsWith("outputs") || path.startsWith("sources")) { tuning = true; key << path << ";"; }
+        }
+        if (tuning) recordUndo(key);
         for (auto& p : patches) {
             const auto path = p["path"].toString();
             if (path.startsWith("device")) { err = "use device.open to change the audio device"; return {}; }
@@ -86,7 +92,7 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "devices.list") return engine.listDevices();
     if (cmd == "device.channels") return engine.channelNames();
     if (cmd == "device.latency") return engine.latencyBreakdown();
-    if (cmd.startsWith("routing.")) return routing(cmd, args, err);
+    if (cmd.startsWith("routing.")) { recordUndo(cmd); forceNewUndoStep(); return routing(cmd, args, err); }
 
     if (cmd == "device.open") {
         DeviceConfig cfg = state.device;
@@ -139,6 +145,8 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "rta.setResolution") { engine.analyzer().rta().setResolution(int(args["bands"])); return true; }
 
     if (cmd == "fir.load") {
+        recordUndo("fir");
+        forceNewUndoStep();
         const int o = int(args["output"]);
         if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
         if (!loadFirFile(o, args["path"].toString(), err)) return {};
@@ -147,6 +155,8 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         return toVar(state);
     }
     if (cmd == "fir.clear") {
+        recordUndo("fir");
+        forceNewUndoStep();
         const int o = int(args["output"]);
         if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
         state.outputs[size_t(o)].fir = {};
@@ -183,7 +193,15 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
 
     if (cmd == "snapshot.list") { juce::Array<juce::var> a; for (auto& n : snapshots.list()) a.add(n); return a; }
     if (cmd == "snapshot.save") { if (!snapshots.save(args["name"].toString(), state, err)) return {}; return true; }
-    if (cmd == "snapshot.recall") return recallSnapshot(args, err);
+    if (cmd == "snapshot.recall") {
+        recordUndo("recall");
+        forceNewUndoStep();
+        auto r = recallSnapshot(args, err);
+        if (err.isNotEmpty() || r.hasProperty("needsRemap")) undoStack.pop_back(); // nothing applied
+        return r;
+    }
+    if (cmd == "history.undo") return stepHistory(true, err);
+    if (cmd == "history.redo") return stepHistory(false, err);
     if (cmd == "snapshot.delete") {
         if (!snapshots.remove(args["name"].toString())) { err = "could not delete snapshot"; return {}; }
         return true;
@@ -407,6 +425,8 @@ juce::var Dispatcher::statusVar()
         set(v, "spl", spl);
     }
     set(v, "sweeping", sweepJob.active);
+    set(v, "canUndo", int(undoStack.size()));
+    set(v, "canRedo", int(redoStack.size()));
     set(v, "aligning", alignJob.active);
     juce::Array<juce::var> inPk, outPk, gr;
     for (int c = 0; c < st.numIn; ++c) inPk.add(st.inPeak[size_t(c)]);
@@ -787,6 +807,37 @@ std::pair<double, bool> Dispatcher::splOffset() const
     if (mic < 0 || mic >= int(state.sources.size())) return { 0.0, false };
     auto it = state.cal.splOffset.find(state.sources[size_t(mic)].name);
     return it == state.cal.splOffset.end() ? std::pair { 0.0, false } : std::pair { it->second, true };
+}
+
+} // namespace vt
+
+namespace vt {
+
+void Dispatcher::recordUndo(const juce::String& key)
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const bool merge = key.isNotEmpty() && key == lastUndoKey && now - lastUndoMs < 1500.0;
+    lastUndoKey = key;
+    lastUndoMs = now;
+    if (merge) return; // same field still being dragged: keep the state from before the drag
+    undoStack.push_back({ state.sources, state.outputs });
+    if (undoStack.size() > 100) undoStack.erase(undoStack.begin());
+    redoStack.clear();
+}
+
+juce::var Dispatcher::stepHistory(bool undo, juce::String& err)
+{
+    auto& from = undo ? undoStack : redoStack;
+    auto& to = undo ? redoStack : undoStack;
+    if (from.empty()) { err = undo ? "nothing to undo" : "nothing to redo"; return {}; }
+    to.push_back({ state.sources, state.outputs });
+    SystemState next = state; // generator, measurement, device and calibration stay as they are
+    next.sources = from.back().sources;
+    next.outputs = from.back().outputs;
+    from.pop_back();
+    forceNewUndoStep();
+    if (!replaceState(next, err, true)) return {};
+    return toVar(state);
 }
 
 } // namespace vt

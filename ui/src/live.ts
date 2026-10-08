@@ -1,12 +1,14 @@
 import './lib/style.css';
 import { connectFromLocation } from './lib/engine';
 import { mountStatusBar, esc } from './lib/statusbar';
+import { installUndo } from './lib/undo';
 import { linToDb, samplesToMs } from './lib/scale';
 import { EqEditor } from './lib/eqeditor';
 import { Channels } from './lib/channels';
 import type { OutputConfig, Status, SystemState } from './lib/types';
 
 const engine = connectFromLocation();
+installUndo(engine);
 mountStatusBar(document.getElementById('status')!, engine);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const report = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));
@@ -257,4 +259,13 @@ engine.on('status', (st) => {
   $('splLive').innerHTML = v > -150
     ? `L${letter}${t === 'fast' ? 'F' : 'S'} ${v.toFixed(1)} <span class="dim" style="font-size:11px">${s.calibrated ? `dB · L${letter}eq ${s.leq[w].toFixed(1)}` : 'dBFS (uncal.)'}</span>`
     : '';
+});
+
+// ---------------------------------------------------------------- undo / redo buttons
+$('undoBtn').onclick = () => void engine.request('history.undo').catch(() => undefined);
+$('redoBtn').onclick = () => void engine.request('history.redo').catch(() => undefined);
+engine.on('status', (st) => {
+  ($('undoBtn') as HTMLButtonElement).disabled = !st.canUndo;
+  ($('redoBtn') as HTMLButtonElement).disabled = !st.canRedo;
+  $('undoBtn').title = `Undo (⌘Z) · ${st.canUndo} step${st.canUndo === 1 ? '' : 's'}`;
 });

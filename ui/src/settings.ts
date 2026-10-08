@@ -1,11 +1,13 @@
 import './lib/style.css';
 import { connectFromLocation } from './lib/engine';
 import { mountStatusBar, esc } from './lib/statusbar';
+import { installUndo } from './lib/undo';
 import { Channels } from './lib/channels';
 import { dbToLin, linToDb, samplesToMs } from './lib/scale';
 import type { SystemState } from './lib/types';
 
 const engine = connectFromLocation();
+installUndo(engine);
 mountStatusBar(document.getElementById('status')!, engine);
 const channels = new Channels(engine);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

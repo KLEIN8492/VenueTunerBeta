@@ -33,7 +33,7 @@ export interface Status {
   inputDevice: string; outputDevice: string; sampleRate: number; bufferSize: number;
   numIn: number; numOut: number; cpu: number; xruns: number; callbacks: number;
   running: boolean; faultMuted: boolean; muteAll: boolean; error: string;
-  sweeping: boolean; aligning: boolean;
+  sweeping: boolean; aligning: boolean; canUndo: number; canRedo: number;
   spl: { fast: number[]; slow: number[]; leq: number[]; peak: number; leqSeconds: number; calibrated: boolean }; // [Z, A, C]
   driverLatency: number; ioLatency: number; ioLatencyCalibrated: boolean; calibrating: boolean;
   inPeak: number[]; outPeak: number[]; limGr: number[];

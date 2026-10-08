@@ -391,4 +391,3 @@ export class EqEditor {
   }
 }
 
-declare global { interface Window { vt?: { pathForFile(f: File): string } } }

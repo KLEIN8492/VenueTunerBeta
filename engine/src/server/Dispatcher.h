@@ -35,6 +35,8 @@ public:
     Latency currentLatency();
 
     juce::var statusVar();
+    // Next tuning change starts a new undo step (tests; the UI uses time-based merging).
+    void forceNewUndoStep() { lastUndoKey = {}; }
     std::pair<double, bool> splOffset() const; // offset for the current mic, calibrated?
     SystemState& stateForTest() { return state; }
     const SystemState& getState() const { return state; }
@@ -48,6 +50,15 @@ private:
     juce::var openDevice(const DeviceConfig&, juce::String& error);
     // Validate a whole new state (round-trip through JSON) and make it current.
     bool replaceState(const SystemState& next, juce::String& error, bool structural);
+
+    // Undo history of the tuning (sources + outputs). Rapid changes with the same key (e.g.
+    // one field being dragged) merge into one step.
+    struct Tuning { std::vector<SourceConfig> sources; std::vector<OutputConfig> outputs; };
+    void recordUndo(const juce::String& key);
+    juce::var stepHistory(bool undo, juce::String& error);
+    std::vector<Tuning> undoStack, redoStack;
+    juce::String lastUndoKey;
+    double lastUndoMs = 0;
     juce::var routing(const juce::String& cmd, const juce::var& args, juce::String& error);
     juce::var recallSnapshot(const juce::var& args, juce::String& error);
     int nextFreeOutputChannel(const SystemState&) const;

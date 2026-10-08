@@ -3,12 +3,14 @@ import { connectFromLocation, type TfFrame, type RtaFrame, type DecayBand } from
 import { parseTraceText } from './lib/traceimport';
 import { Plot, type PlotTrace } from './lib/plot';
 import { mountStatusBar, esc } from './lib/statusbar';
+import { installUndo } from './lib/undo';
 import { coherenceAlpha } from './lib/coherence';
 import { samplesToMs, SPEED_OF_SOUND } from './lib/scale';
 import type { SystemState, Trace } from './lib/types';
 import { mountAutoEq, mountXoAlign } from './lib/tunepanels';
 
 const engine = connectFromLocation();
+installUndo(engine);
 mountStatusBar(document.getElementById('status')!, engine);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 

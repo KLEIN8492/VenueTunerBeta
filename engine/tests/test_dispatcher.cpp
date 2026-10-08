@@ -186,3 +186,47 @@ TEST_CASE("Dispatcher: SPL calibration is stored per mic")
     CHECK(bool(st["spl"]["calibrated"]));
     CHECK(std::abs(double(st["spl"]["slow"][0]) - 94.0) < 0.2);
 }
+
+TEST_CASE("Dispatcher: undo / redo of tuning changes")
+{
+    Fixture f;
+    auto& s = f.d->stateForTest();
+    auto patch = [&](const char* path, double v) {
+        auto args = juce::var(new juce::DynamicObject());
+        args.getDynamicObject()->setProperty("path", path);
+        args.getDynamicObject()->setProperty("value", v);
+        auto req = juce::var(new juce::DynamicObject());
+        req.getDynamicObject()->setProperty("id", 1);
+        req.getDynamicObject()->setProperty("cmd", "state.patch");
+        req.getDynamicObject()->setProperty("args", args);
+        return f.d->handle(req);
+    };
+    patch("outputs/0/gainDb", -3);
+    f.d->forceNewUndoStep();
+    patch("outputs/0/delayMs", 5);
+    // A drag: many rapid changes to the same field are one step.
+    f.d->forceNewUndoStep();
+    for (int i = 1; i <= 20; ++i) patch("outputs/1/gainDb", -0.5 * i);
+    CHECK(s.outputs[1].gainDb == -10.0f);
+
+    REQUIRE(bool(f.d->handle(cmd(R"({"id":2,"cmd":"history.undo"})"))["ok"]));
+    CHECK(s.outputs[1].gainDb == 0.0f);  // whole drag undone at once
+    CHECK(s.outputs[0].delayMs == 5.0f);
+    f.d->handle(cmd(R"({"id":3,"cmd":"history.undo"})"));
+    CHECK(s.outputs[0].delayMs == 0.0f);
+    CHECK(s.outputs[0].gainDb == -3.0f);
+    f.d->handle(cmd(R"({"id":4,"cmd":"history.redo"})"));
+    CHECK(s.outputs[0].delayMs == 5.0f);
+
+    // Generator / measurement settings are not part of the history…
+    f.d->handle(cmd(R"({"id":5,"cmd":"state.patch","args":{"path":"gen/levelDb","value":-30}})"));
+    f.d->handle(cmd(R"({"id":6,"cmd":"history.undo"})"));
+    CHECK(s.gen.levelDb == -30.0f);      // …and an undo never changes them
+    CHECK(s.outputs[0].delayMs == 0.0f);
+
+    // A new edit clears the redo stack.
+    f.d->forceNewUndoStep();
+    patch("outputs/0/gainDb", -6);
+    auto r = f.d->handle(cmd(R"({"id":7,"cmd":"history.redo"})"));
+    CHECK_FALSE(bool(r["ok"]));
+}

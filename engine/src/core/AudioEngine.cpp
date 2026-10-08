@@ -166,7 +166,12 @@ void AudioEngine::prepare(double sr, int block)
 }
 
 void AudioEngine::audioDeviceStopped() { faultMuted.store(true); }
-void AudioEngine::audioDeviceError(const juce::String& e) { faultMuted.store(true); lastError = e; }
+void AudioEngine::audioDeviceError(const juce::String& e)
+{
+    faultMuted.store(true);
+    // May arrive on a driver thread: hand the message to the message thread (no shared String).
+    juce::MessageManager::callAsync([this, e] { lastError = e; });
+}
 
 void AudioEngine::changeListenerCallback(juce::ChangeBroadcaster*)
 {
@@ -199,6 +204,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* in, int n
 
 void AudioEngine::processBlock(const float* const* in, int numIn, float* const* out, int numOut, int n)
 {
+    // Flush denormals to zero: decaying IIR states on silence otherwise get 10–100× slower
+    // on x86 (Intel Macs, mini PCs) exactly when the room goes quiet.
+    const juce::ScopedNoDenormals noDenormals;
     if (n > int(genBuf.size())) { // should never happen; stay silent rather than allocate
         for (int o = 0; o < numOut; ++o) if (out[o]) juce::FloatVectorOperations::clear(out[o], n);
         xruns.fetch_add(1, std::memory_order_relaxed);

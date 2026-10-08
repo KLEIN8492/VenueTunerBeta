@@ -115,7 +115,16 @@ function buildMenu() {
         { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { type: 'separator' }, { role: 'quit' },
       ],
     }] : []),
-    { role: 'editMenu' },
+    {
+      // Undo/redo go to the page: text fields undo typing, everything else undoes tuning
+      // changes in the engine (shared by all windows).
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: (_, win) => win?.webContents.send('vt-history', 'undo') },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: (_, win) => win?.webContents.send('vt-history', 'redo') },
+        { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      ],
+    },
     {
       label: 'Window',
       submenu: [
