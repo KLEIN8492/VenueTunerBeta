@@ -1,15 +1,19 @@
 #pragma once
 #include "core/Params.h"
+#include "dsp/Biquad.h"
 #include "dsp/DelayLine.h"
 #include "dsp/Limiter.h"
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <cmath>
 
 namespace vt {
 
-// One output's processing: gain·polarity → delay → limiter → mute.
+// One output's processing: gain·polarity → delay → IIR (PEQ, HP, LP, AP) → FIR → limiter → mute.
 // IIR/gain path: zero added latency. prepare() allocates; process() never does.
+// Coefficient changes ramp linearly over kRamp samples; interpolating (a1, a2) between two
+// stable filters stays stable because the biquad stability triangle is convex.
 class OutputChain
 {
 public:
@@ -22,7 +26,13 @@ public:
         muteGain.reset(sr, 0.02);
         gain.setCurrentAndTargetValue(0.0f);
         muteGain.setCurrentAndTargetValue(0.0f);
+        for (int k = 0; k < kMaxIir; ++k) { cur[k] = target[k] = Biquad::identity(); state[k].reset(); }
+        rampLeft = 0;
+        if (conv) conv->prepare({ sr, juce::uint32(4096), 1 });
     }
+
+    // Optional zero-latency convolution (owned by the engine, shared message queue).
+    void setConvolution(juce::dsp::Convolution* c) { conv = c; }
 
     void process(const OutputParams& p, float* buf, int n, bool muteAll)
     {
@@ -32,10 +42,26 @@ public:
         delay.setDelaySamples(int(std::lround(p.delayMs * 0.001 * sampleRate)));
         limiter.set(p.limThreshDb, p.limAttackMs, p.limReleaseMs, p.limiterOn);
 
+        startRampIfChanged(p);
+
+        // Pass 1: gain · polarity → delay → IIR bank
+        for (int i = 0; i < n; ++i) {
+            double y = delay.process(buf[i] * gain.getNextValue());
+            if (rampLeft > 0) stepRamp();
+            for (int k = 0; k < kMaxIir; ++k)
+                if (active[k]) y = state[k].process(cur[k], y);
+            buf[i] = float(y);
+        }
+        // Pass 2: FIR (block-based convolution)
+        if (p.firOn && conv != nullptr) {
+            float* chans[1] = { buf };
+            juce::dsp::AudioBlock<float> block(chans, 1, size_t(n));
+            conv->process(juce::dsp::ProcessContextReplacing<float>(block));
+        }
+        // Pass 3: limiter → mute
         float pk = 0.0f;
         for (int i = 0; i < n; ++i) {
-            float y = delay.process(buf[i] * gain.getNextValue());
-            y = limiter.process(y) * muteGain.getNextValue();
+            const float y = limiter.process(buf[i]) * muteGain.getNextValue();
             buf[i] = y;
             pk = std::max(pk, std::abs(y));
         }
@@ -51,6 +77,47 @@ public:
     float takeGainReductionDb() { return grHold.exchange(0.0f, std::memory_order_relaxed); }
 
 private:
+    static constexpr int kRamp = 256;
+
+    void startRampIfChanged(const OutputParams& p)
+    {
+        bool changed = false;
+        for (int k = 0; k < kMaxIir; ++k) changed |= !(p.iir[k] == target[k]);
+        if (!changed) return;
+        for (int k = 0; k < kMaxIir; ++k) {
+            target[k] = p.iir[k];
+            const Biquad &a = cur[k], &b = target[k];
+            step[k] = { (b.b0 - a.b0) / kRamp, (b.b1 - a.b1) / kRamp, (b.b2 - a.b2) / kRamp,
+                        (b.a1 - a.a1) / kRamp, (b.a2 - a.a2) / kRamp };
+            active[k] = !a.isIdentity() || !b.isIdentity();
+        }
+        rampLeft = kRamp;
+    }
+
+    void stepRamp()
+    {
+        if (--rampLeft == 0) {
+            for (int k = 0; k < kMaxIir; ++k) {
+                cur[k] = target[k]; // land exactly on the target
+                active[k] = !cur[k].isIdentity();
+                if (!active[k]) state[k].reset();
+            }
+            return;
+        }
+        for (int k = 0; k < kMaxIir; ++k) {
+            if (!active[k]) continue;
+            auto& c = cur[k];
+            const auto& d = step[k];
+            c.b0 += d.b0; c.b1 += d.b1; c.b2 += d.b2; c.a1 += d.a1; c.a2 += d.a2;
+        }
+    }
+
+    Biquad cur[kMaxIir], target[kMaxIir], step[kMaxIir];
+    BiquadState state[kMaxIir];
+    bool active[kMaxIir] {};
+    int rampLeft = 0;
+    juce::dsp::Convolution* conv = nullptr;
+
     double sampleRate = 48000.0;
     DelayLine delay;
     Limiter limiter;

@@ -1,9 +1,12 @@
 #pragma once
+#include "dsp/Biquad.h"
 #include <cstdint>
 
 namespace vt {
 
 constexpr int kMaxCh = 64;
+// IIR slots per output: 16 PEQ + 4 HP + 4 LP + 4 all-pass (fixed positions so ramps line up).
+constexpr int kIirPeq = 0, kIirHp = 16, kIirLp = 20, kIirAp = 24, kMaxIir = 28;
 
 // Everything the audio thread needs, as plain data (copied through a TripleBuffer).
 struct OutputParams
@@ -17,6 +20,8 @@ struct OutputParams
     float limAttackMs = 0.0f;
     float limReleaseMs = 100.0f;
     float mix[kMaxCh] {}; // linear gain from each console input
+    Biquad iir[kMaxIir];  // identity = unused slot
+    bool firOn = false;
 };
 
 enum class RefSource : uint8_t { Generator = 0, PhysicalInput = 1, ConsoleInput = 2 };

@@ -19,6 +19,35 @@ struct InputConfig
     juce::String role = "console"; // console | mic | loopback | none
 };
 
+struct PeqBand
+{
+    bool on = true;
+    juce::String type = "bell"; // bell | lowshelf | highshelf | notch | lowpass | highpass
+    float freq = 1000.0f, gainDb = 0.0f, q = 1.0f;
+};
+
+struct XoConfig
+{
+    juce::String type = "off"; // off | bw6..bw48 | lr12 | lr24 | lr48
+    float freq = 100.0f;
+};
+
+struct ApBand
+{
+    bool on = true;
+    int order = 2;
+    float freq = 1000.0f, q = 0.7f;
+};
+
+struct FirConfig
+{
+    bool on = false;
+    juce::String path;
+    int taps = 0, latencySamples = 0; // filled in by the engine when loaded
+};
+
+constexpr int kMaxPeq = 16, kMaxAp = 4;
+
 struct OutputConfig
 {
     juce::String name, type = "full", colour = "#7fb2ff";
@@ -29,6 +58,10 @@ struct OutputConfig
     bool limiterOn = true;
     float limThreshDb = -1.0f, limAttackMs = 0.0f, limReleaseMs = 100.0f;
     std::vector<float> mix; // linear gain per input
+    std::vector<PeqBand> peq;
+    XoConfig hp, lp;
+    std::vector<ApBand> ap;
+    FirConfig fir;
 };
 
 struct GeneratorConfig
@@ -77,6 +110,6 @@ bool outputsFromVar(const juce::var&, std::vector<OutputConfig>& out, juce::Stri
 // Path like "outputs/2/gainDb". Unknown paths, wrong types, out-of-range values fail
 // and leave the state unchanged.
 bool applyPatch(SystemState&, const juce::String& path, const juce::var& value, juce::String& error);
-Params toParams(const SystemState&);
+Params toParams(const SystemState&, double sampleRate = 48000.0);
 
 } // namespace vt

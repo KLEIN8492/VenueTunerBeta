@@ -1,4 +1,5 @@
 #include "server/Dispatcher.h"
+#include "dsp/FirLoader.h"
 
 namespace vt {
 
@@ -111,6 +112,23 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         return t;
     }
 
+    if (cmd == "fir.load") {
+        const int o = int(args["output"]);
+        if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
+        if (!loadFirFile(o, args["path"].toString(), err)) return {};
+        state.outputs[size_t(o)].fir.on = true;
+        commit();
+        return toVar(state);
+    }
+    if (cmd == "fir.clear") {
+        const int o = int(args["output"]);
+        if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
+        state.outputs[size_t(o)].fir = {};
+        loadedFir[size_t(o)] = {};
+        commit();
+        return toVar(state);
+    }
+
     if (cmd == "calibrate.latency") return startLatencyCalibration(int(args["output"]), int(args["input"]), err);
     if (cmd == "calibrate.clear") {
         const auto st = engine.status();
@@ -179,6 +197,7 @@ juce::var Dispatcher::openDevice(const DeviceConfig& cfg, juce::String& err)
         state.device.sampleRate = st.sampleRate;
         state.device.bufferSize = st.bufferSize;
         state.resizeIO(st.numIn, st.numOut);
+        loadedFir.fill({}); // reload FIRs: latency in samples depends on the new rate
         for (int i = 0; i < int(state.inputs.size()); ++i)
             if (state.inputs[size_t(i)].name.isEmpty()) state.inputs[size_t(i)].name = "In " + juce::String(i + 1);
         commit(true);
@@ -186,9 +205,50 @@ juce::var Dispatcher::openDevice(const DeviceConfig& cfg, juce::String& err)
     return statusVar();
 }
 
+double Dispatcher::sampleRate()
+{
+    const double sr = engine.status().sampleRate;
+    return sr > 0 ? sr : state.device.sampleRate;
+}
+
+bool Dispatcher::loadFirFile(int o, const juce::String& path, juce::String& err)
+{
+    juce::AudioBuffer<float> ir;
+    double fileSr = 0;
+    if (!FirLoader::load(juce::File(path), sampleRate(), ir, fileSr, err)) return false;
+    auto& f = state.outputs[size_t(o)].fir;
+    f.path = path;
+    f.taps = ir.getNumSamples();
+    // Latency of the filter itself (e.g. half the length for linear phase), in engine samples.
+    f.latencySamples = juce::roundToInt(FirLoader::peakIndex(ir) * sampleRate() / fileSr);
+    engine.loadFir(o, std::move(ir), fileSr);
+    loadedFir[size_t(o)] = path;
+    return true;
+}
+
+void Dispatcher::syncFirs()
+{
+    for (size_t o = 0; o < state.outputs.size(); ++o) {
+        auto& f = state.outputs[o].fir;
+        if (f.path.isEmpty() || f.path == loadedFir[o]) continue;
+        juce::String err;
+        if (!loadFirFile(int(o), f.path, err)) {
+            f.on = false;
+            f.taps = 0;
+            if (onEvent) {
+                auto e = object();
+                set(e, "event", "error");
+                set(e, "message", "Output " + juce::String(int(o) + 1) + " FIR: " + err);
+                onEvent(e);
+            }
+        }
+    }
+}
+
 void Dispatcher::commit(bool measureChanged)
 {
-    engine.setParams(toParams(state));
+    syncFirs();
+    engine.setParams(toParams(state, sampleRate()));
     engine.analyzer().setAveraging(state.measure.averaging);
     engine.analyzer().setSmoothing(state.measure.smoothing);
     if (measureChanged) engine.analyzer().reset();

@@ -6,7 +6,20 @@ namespace {
 constexpr float kGenFloor = 1e-5f; // -100 dB: start/end point of the generator fade
 }
 
-AudioEngine::AudioEngine() = default;
+AudioEngine::AudioEngine()
+{
+    for (size_t o = 0; o < convs.size(); ++o) {
+        convs[o] = std::make_unique<juce::dsp::Convolution>(juce::dsp::Convolution::NonUniform { 256 }, convQueue);
+        chains[o].setConvolution(convs[o].get());
+    }
+}
+
+void AudioEngine::loadFir(int output, juce::AudioBuffer<float>&& ir, double irSampleRate)
+{
+    if (output < 0 || output >= kMaxCh) return;
+    convs[size_t(output)]->loadImpulseResponse(std::move(ir), irSampleRate, juce::dsp::Convolution::Stereo::no,
+                                               juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::no);
+}
 
 AudioEngine::~AudioEngine()
 {

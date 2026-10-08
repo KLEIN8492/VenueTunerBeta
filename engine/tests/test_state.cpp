@@ -92,3 +92,50 @@ TEST_CASE("Snapshots save, recall, reject corrupt files, autosave")
     CHECK_FALSE(snaps.list().contains("Show A"));
     dir.deleteRecursively();
 }
+
+TEST_CASE("Filter config round-trips and validates")
+{
+    auto s = sample();
+    auto& o = s.outputs[0];
+    o.peq.push_back({ true, "bell", 1000.0f, -4.5f, 2.0f });
+    o.peq.push_back({ false, "highshelf", 8000.0f, 3.0f, 0.7f });
+    o.hp = { "lr24", 90.0f };
+    o.lp = { "bw12", 18000.0f };
+    o.ap.push_back({ true, 2, 120.0f, 0.8f });
+    o.fir = { true, "/tmp/x.wav", 1024, 511 };
+    vt::SystemState back;
+    juce::String err;
+    REQUIRE(vt::fromVar(vt::toVar(s), back, err));
+    CHECK(juce::JSON::toString(vt::toVar(back)) == juce::JSON::toString(vt::toVar(s)));
+    CHECK(back.outputs[0].peq[1].type == "highshelf");
+    CHECK(back.outputs[0].hp.type == "lr24");
+    CHECK(back.outputs[0].fir.latencySamples == 511);
+
+    CHECK(vt::applyPatch(s, "outputs/0/peq/0/gainDb", -6.0, err));
+    CHECK(s.outputs[0].peq[0].gainDb == -6.0f);
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq/0/q", 0.0, err));        // Q too small
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq/0/freq", 5.0, err));     // below 10 Hz
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq/0/type", "wobble", err));
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/hp/type", "lr96", err));
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/ap/0/order", 3, err));
+
+    juce::Array<juce::var> many;
+    for (int i = 0; i < 17; ++i) {
+        auto b = juce::var(new juce::DynamicObject());
+        b.getDynamicObject()->setProperty("freq", 1000);
+        many.add(b);
+    }
+    CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq", many, err)); // > 16 bands
+    CHECK(err.contains("16"));
+}
+
+TEST_CASE("Milestone 1 snapshots without filter fields still load")
+{
+    vt::SystemState s;
+    juce::String err;
+    auto v = juce::JSON::parse(R"({"outputs":[{"name":"Old","gainDb":-3}]})");
+    REQUIRE(vt::fromVar(v, s, err));
+    CHECK(s.outputs[0].peq.empty());
+    CHECK(s.outputs[0].hp.type == "off");
+    CHECK_FALSE(s.outputs[0].fir.on);
+}

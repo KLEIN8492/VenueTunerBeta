@@ -41,6 +41,8 @@ public:
     juce::var listDevices();
 
     void setParams(const Params& p) { params.write(p); }
+    // Any thread: the convolution swaps the IR in on its background thread and crossfades.
+    void loadFir(int output, juce::AudioBuffer<float>&& ir, double irSampleRate);
     void setMuteAll(bool on) { muteAll.store(on); }
     void unmuteAfterFault() { faultMuted.store(false); }
     Status status(); // also resets peak holds
@@ -76,6 +78,8 @@ private:
 
     TripleBuffer<Params> params;
     std::array<OutputChain, kMaxCh> chains;
+    juce::dsp::ConvolutionMessageQueue convQueue;
+    std::array<std::unique_ptr<juce::dsp::Convolution>, kMaxCh> convs;
     PinkNoise pink;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> genGain;
     std::vector<float> genBuf, mixBuf, zeroBuf;

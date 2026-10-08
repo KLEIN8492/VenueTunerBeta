@@ -3,6 +3,7 @@
 #include "core/SystemState.h"
 #include "measure/MicCal.h"
 #include "server/Snapshots.h"
+#include <array>
 #include <functional>
 
 namespace vt {
@@ -38,6 +39,9 @@ public:
 private:
     juce::var run(const juce::String& cmd, const juce::var& args, juce::String& error);
     void commit(bool measureChanged = false); // push params, broadcast, schedule autosave
+    double sampleRate();
+    void syncFirs(); // (re)load FIR files whose path changed (snapshot recall, start-up)
+    bool loadFirFile(int output, const juce::String& path, juce::String& error);
     juce::var openDevice(const DeviceConfig&, juce::String& error);
     juce::var startLatencyCalibration(int output, int input, juce::String& error);
     void finishCalibration(bool ok, double samples, const juce::String& message);
@@ -59,6 +63,7 @@ private:
         int stable = 0;
     } calib;
     int calibOutput = 0;
+    std::array<juce::String, kMaxCh> loadedFir; // path currently in each convolution
 };
 
 } // namespace vt

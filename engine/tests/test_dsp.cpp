@@ -106,3 +106,46 @@ TEST_CASE("OutputChain gain, polarity and mute")
     run(true);
     CHECK(run(true) == 0.0f);
 }
+
+TEST_CASE("OutputChain IIR: bell boosts, ramps without clicks, identity is bit-exact")
+{
+    vt::OutputChain chain;
+    chain.prepare(kSr, 512);
+    vt::OutputParams p {};
+    p.limiterOn = false;
+    std::vector<float> buf(480);
+    double phase = 0;
+    auto run = [&](double freq, float amp, float* maxJump = nullptr) {
+        float peak = 0, prev = buf.back();
+        for (int b = 0; b < 100; ++b) {
+            for (auto& x : buf) { x = amp * float(std::sin(phase)); phase += 2 * M_PI * freq / kSr; }
+            chain.process(p, buf.data(), int(buf.size()), false);
+            for (float y : buf) {
+                if (b > 50) peak = std::max(peak, std::abs(y));
+                if (maxJump) *maxJump = std::max(*maxJump, std::abs(y - prev));
+                prev = y;
+            }
+        }
+        return peak;
+    };
+    run(1000, 0.25f); // settle the gain ramp
+    p.iir[vt::kIirPeq] = vt::design::bell(1000, 1.0, 6.0, kSr);
+    CHECK_THAT(run(1000, 0.25f) / 0.25f, WithinAbs(1.9953, 0.01));
+
+    // Jump from +6 to +12 dB mid-stream: no click.
+    float jump = 0;
+    p.iir[vt::kIirPeq] = vt::design::bell(100, 1.0, 0.1, kSr);
+    run(100, 0.5f);
+    p.iir[vt::kIirPeq] = vt::design::bell(100, 1.0, 12.0, kSr);
+    run(100, 0.5f, &jump);
+    CHECK(jump < 0.05f);
+
+    // All-identity sections: output equals input exactly.
+    vt::OutputChain plain;
+    plain.prepare(kSr, 512);
+    vt::OutputParams q {};
+    q.limiterOn = false;
+    std::vector<float> a(4800, 0.3f);
+    for (int i = 0; i < 10; ++i) { std::fill(a.begin(), a.end(), 0.3f); plain.process(q, a.data(), int(a.size()), false); }
+    CHECK(a.back() == 0.3f);
+}

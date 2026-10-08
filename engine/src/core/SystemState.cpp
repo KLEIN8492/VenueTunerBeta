@@ -1,4 +1,5 @@
 #include "core/SystemState.h"
+#include "dsp/FilterDesign.h"
 #include <cmath>
 
 namespace vt {
@@ -48,8 +49,44 @@ juce::var outputToVar(const OutputConfig& o)
     d->setProperty("limAttackMs", o.limAttackMs);
     d->setProperty("limReleaseMs", o.limReleaseMs);
     d->setProperty("mix", arr(o.mix));
+
+    juce::Array<juce::var> peq, ap;
+    for (auto& b : o.peq) {
+        auto x = obj();
+        x.getDynamicObject()->setProperty("on", b.on);
+        x.getDynamicObject()->setProperty("type", b.type);
+        x.getDynamicObject()->setProperty("freq", b.freq);
+        x.getDynamicObject()->setProperty("gainDb", b.gainDb);
+        x.getDynamicObject()->setProperty("q", b.q);
+        peq.add(x);
+    }
+    for (auto& b : o.ap) {
+        auto x = obj();
+        x.getDynamicObject()->setProperty("on", b.on);
+        x.getDynamicObject()->setProperty("order", b.order);
+        x.getDynamicObject()->setProperty("freq", b.freq);
+        x.getDynamicObject()->setProperty("q", b.q);
+        ap.add(x);
+    }
+    d->setProperty("peq", peq);
+    d->setProperty("ap", ap);
+    for (auto [key, xo] : { std::pair { "hp", &o.hp }, std::pair { "lp", &o.lp } }) {
+        auto x = obj();
+        x.getDynamicObject()->setProperty("type", xo->type);
+        x.getDynamicObject()->setProperty("freq", xo->freq);
+        d->setProperty(key, x);
+    }
+    auto fir = obj();
+    fir.getDynamicObject()->setProperty("on", o.fir.on);
+    fir.getDynamicObject()->setProperty("path", o.fir.path);
+    fir.getDynamicObject()->setProperty("taps", o.fir.taps);
+    fir.getDynamicObject()->setProperty("latencySamples", o.fir.latencySamples);
+    d->setProperty("fir", fir);
     return v;
 }
+
+const juce::StringArray kPeqTypes { "bell", "lowshelf", "highshelf", "notch", "lowpass", "highpass" };
+const juce::StringArray kXoTypes { "off", "bw6", "bw12", "bw18", "bw24", "bw36", "bw48", "lr12", "lr24", "lr48" };
 
 // Strict field reader. Missing fields keep their default; present fields must have
 // the right type and range.
@@ -125,6 +162,40 @@ struct Reader
     }
 };
 
+// Array of objects under `key`, each read by `readOne`, at most `maxCount`.
+template <class T, class F>
+bool objects(const juce::var& v, const char* key, std::vector<T>& out, int maxCount, const juce::String& ctx,
+             juce::String& err, F readOne)
+{
+    if (!v.hasProperty(key)) return true;
+    const auto* a = v[key].getArray();
+    if (a == nullptr) { err = ctx + key + ": expected an array"; return false; }
+    if (a->size() > maxCount) { err = ctx + key + ": at most " + juce::String(maxCount) + " allowed"; return false; }
+    std::vector<T> tmp(size_t(a->size()));
+    for (int i = 0; i < a->size(); ++i) {
+        if (!(*a)[i].isObject()) { err = ctx + key + "/" + juce::String(i) + ": expected an object"; return false; }
+        Reader r { (*a)[i], ctx + key + "/" + juce::String(i) + "/", err };
+        if (!readOne(r, tmp[size_t(i)])) return false;
+    }
+    out = std::move(tmp);
+    return true;
+}
+
+bool xo(const juce::var& v, const char* key, XoConfig& x, const juce::String& ctx, juce::String& err)
+{
+    if (!v.hasProperty(key)) return true;
+    Reader r { v[key], ctx + key + "/", err };
+    return r.str("type", x.type, kXoTypes) && r.num("freq", x.freq, 10, 24000);
+}
+
+bool fir(const juce::var& v, FirConfig& f, const juce::String& ctx, juce::String& err)
+{
+    if (!v.hasProperty("fir")) return true;
+    Reader r { v["fir"], ctx + "fir/", err };
+    return r.boolean("on", f.on) && r.str("path", f.path) && r.integer("taps", f.taps, 0, 1 << 20)
+        && r.integer("latencySamples", f.latencySamples, 0, 1 << 20);
+}
+
 bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx, juce::String& err)
 {
     if (!v.isObject()) { err = ctx + "expected an object"; return false; }
@@ -134,7 +205,17 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
         && r.num("delayMs", o.delayMs, 0, 1000) && r.boolean("mute", o.mute)
         && r.boolean("limiterOn", o.limiterOn) && r.num("limThreshDb", o.limThreshDb, -40, 0)
         && r.num("limAttackMs", o.limAttackMs, 0, 100) && r.num("limReleaseMs", o.limReleaseMs, 1, 5000)
-        && r.list("mix", o.mix, 0.0, 4.0);
+        && r.list("mix", o.mix, 0.0, 4.0)
+        && objects(v, "peq", o.peq, kMaxPeq, ctx, err, [&](Reader& b, PeqBand& p) {
+               return b.boolean("on", p.on) && b.str("type", p.type, kPeqTypes) && b.num("freq", p.freq, 10, 24000)
+                   && b.num("gainDb", p.gainDb, -30, 15) && b.num("q", p.q, 0.1, 30);
+           })
+        && objects(v, "ap", o.ap, kMaxAp, ctx, err, [&](Reader& b, ApBand& p) {
+               return b.boolean("on", p.on) && b.integer("order", p.order, 1, 2) && b.num("freq", p.freq, 10, 24000)
+                   && b.num("q", p.q, 0.1, 10);
+           })
+        && xo(v, "hp", o.hp, ctx, err) && xo(v, "lp", o.lp, ctx, err)
+        && fir(v, o.fir, ctx, err);
 }
 
 } // namespace
@@ -298,7 +379,7 @@ bool applyPatch(SystemState& s, const juce::String& path, const juce::var& value
     return fromVar(root, s, err); // validates everything; s untouched on failure
 }
 
-Params toParams(const SystemState& s)
+Params toParams(const SystemState& s, double sampleRate)
 {
     Params p;
     p.numOut = int(s.outputs.size());
@@ -314,6 +395,8 @@ Params toParams(const SystemState& s)
         q.limAttackMs = c.limAttackMs;
         q.limReleaseMs = c.limReleaseMs;
         for (size_t i = 0; i < c.mix.size() && i < size_t(kMaxCh); ++i) q.mix[i] = c.mix[i];
+        designOutputIir(c, sampleRate, q.iir);
+        q.firOn = c.fir.on && c.fir.taps > 0;
     }
     for (size_t i = 0; i < s.inputs.size() && i < size_t(kMaxCh); ++i)
         if (s.inputs[i].role == "console") p.consoleInputs |= (1ull << i);

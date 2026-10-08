@@ -55,6 +55,7 @@ target_link_libraries(vt_core
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_dsp
+    juce::juce_audio_formats
     ixwebsocket)
 
 # JUCE modules are compiled into vt_core; expose their headers/defines to dependents.
