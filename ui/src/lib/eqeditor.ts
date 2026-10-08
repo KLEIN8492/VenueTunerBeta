@@ -42,6 +42,7 @@ export class EqEditor {
   private linked = false;
   private pending = new Map<string, unknown>();
   private flushTimer = 0;
+  private inFlight = 0; // patches sent, reply not yet received
   private mag: Plot;
   private phase: Plot;
   private side: HTMLElement;
@@ -62,7 +63,8 @@ export class EqEditor {
     this.bindPointer(root.querySelector('.eq-mag')!);
     this.side.addEventListener('change', (e) => this.onPanelChange(e));
     this.side.addEventListener('click', (e) => this.onPanelClick(e));
-    engine.on('state', (s) => { if (this.out >= 0 && !this.drag && s.outputs[this.out]) { this.cfg = structuredClone(s.outputs[this.out]); this.render(); } });
+    this.side.addEventListener('focusout', () => setTimeout(() => this.renderPanel(), 0));
+    engine.on('state', () => this.adoptEngineState());
     engine.on('tf', (f) => { this.live = f; if (this.showLive) this.redraw(); });
     window.addEventListener('storage', (e) => { if (e.key === 'vt.traces') this.render(); });
   }
@@ -72,6 +74,15 @@ export class EqEditor {
     this.selected = null;
     const o = this.engine.state?.outputs[i];
     this.cfg = o ? structuredClone(o) : null;
+    this.render();
+  }
+
+  // Take the engine's copy of this output, unless local edits are still on their way:
+  // an older state arriving mid-edit would otherwise resurrect a deleted band.
+  private adoptEngineState(): void {
+    const o = this.engine.state?.outputs[this.out];
+    if (this.out < 0 || !o || this.drag || this.pending.size || this.inFlight) return;
+    this.cfg = structuredClone(o);
     this.render();
   }
 
@@ -88,7 +99,10 @@ export class EqEditor {
       const targets = this.linked ? [...new Set([this.out, ...this.selection()])] : [this.out];
       const patches = [...this.pending].flatMap(([f, v]) => targets.map((o) => ({ path: `outputs/${o}/${f}`, value: v })));
       this.pending.clear();
-      this.engine.patchMany(patches).catch((e: Error) => alert(e.message));
+      this.inFlight++;
+      this.engine.patchMany(patches)
+        .catch((e: Error) => alert(e.message))
+        .finally(() => { this.inFlight--; this.adoptEngineState(); });
     }, 40);
   }
   private sendPeq(): void { this.send('peq', this.cfg!.peq); }
@@ -212,7 +226,7 @@ export class EqEditor {
       this.redraw();
       this.updatePanelValues();
     });
-    window.addEventListener('mouseup', () => { this.drag = null; });
+    window.addEventListener('mouseup', () => { if (this.drag) { this.drag = null; this.adoptEngineState(); } });
     canvas.addEventListener('wheel', (e) => {
       if (!this.cfg) return;
       const h = this.hit(e) ?? this.selected;
@@ -246,7 +260,9 @@ export class EqEditor {
 
   // ---------------------------------------------------------------- side panel
   private renderPanel(): void {
-    if (this.side.contains(document.activeElement) && document.activeElement !== document.body) return;
+    // Don't rebuild under a field the user is typing in; buttons/checkboxes never block.
+    const a = document.activeElement as HTMLInputElement | null;
+    if (a && this.side.contains(a) && (a.tagName === 'SELECT' || (a.tagName === 'INPUT' && (a.type === 'number' || a.type === 'text')))) return;
     const o = this.cfg;
     if (!o) { this.side.innerHTML = '<div class="dim">Select an output strip to edit its filters.</div>'; return; }
     const sr = this.sr();
