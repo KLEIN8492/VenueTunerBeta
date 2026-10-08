@@ -75,7 +75,8 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
             const auto path = p["path"].toString();
             if (path.startsWith("device")) { err = "use device.open to change the audio device"; return {}; }
             if (!applyPatch(next, path, p["value"], err)) return {};
-            measureChanged |= path.startsWith("measure/micInput") || path.startsWith("measure/ref");
+            measureChanged |= path.startsWith("measure/micSource") || path.startsWith("measure/ref")
+                           || path.startsWith("sources");
         }
         state = std::move(next);
         commit(measureChanged);
@@ -83,6 +84,9 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     }
 
     if (cmd == "devices.list") return engine.listDevices();
+    if (cmd == "device.channels") return engine.channelNames();
+    if (cmd == "device.latency") return engine.latencyBreakdown();
+    if (cmd.startsWith("routing.")) return routing(cmd, args, err);
 
     if (cmd == "device.open") {
         DeviceConfig cfg = state.device;
@@ -161,11 +165,7 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
 
     if (cmd == "snapshot.list") { juce::Array<juce::var> a; for (auto& n : snapshots.list()) a.add(n); return a; }
     if (cmd == "snapshot.save") { if (!snapshots.save(args["name"].toString(), state, err)) return {}; return true; }
-    if (cmd == "snapshot.recall") {
-        if (!snapshots.recall(args["name"].toString(), state, err)) return {};
-        commit();
-        return toVar(state);
-    }
+    if (cmd == "snapshot.recall") return recallSnapshot(args, err);
     if (cmd == "snapshot.delete") {
         if (!snapshots.remove(args["name"].toString())) { err = "could not delete snapshot"; return {}; }
         return true;
@@ -182,9 +182,11 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
             if (err.isEmpty()) err = "invalid snapshot JSON";
             return {};
         }
-        SystemState tmp = state;
-        tmp.outputs = outs;
-        if (!snapshots.save(args["name"].toString(), tmp, err)) return {};
+        // Store the file as given (it may come from another system / interface).
+        const auto f = snapshots.fileFor(args["name"].toString());
+        if (args["name"].toString().trim().isEmpty()) { err = "Snapshot name is empty"; return {}; }
+        f.getParentDirectory().createDirectory();
+        if (!f.replaceWithText(juce::JSON::toString(v))) { err = "Could not write snapshot"; return {}; }
         return true;
     }
 
@@ -200,10 +202,8 @@ juce::var Dispatcher::openDevice(const DeviceConfig& cfg, juce::String& err)
         state.device = cfg;
         state.device.sampleRate = st.sampleRate;
         state.device.bufferSize = st.bufferSize;
-        state.resizeIO(st.numIn, st.numOut);
+        state.ensureDefaults(st.numIn, st.numOut);
         loadedFir.fill({}); // reload FIRs: latency in samples depends on the new rate
-        for (int i = 0; i < int(state.inputs.size()); ++i)
-            if (state.inputs[size_t(i)].name.isEmpty()) state.inputs[size_t(i)].name = "In " + juce::String(i + 1);
         commit(true);
     }
     return statusVar();
@@ -266,45 +266,33 @@ void Dispatcher::commit(bool measureChanged)
 // ---------------------------------------------------------------- latency calibration
 juce::var Dispatcher::startLatencyCalibration(int output, int input, juce::String& err)
 {
-    if (calib.active) { err = "calibration already running"; return {}; }
-    if (output < 0 || output >= int(state.outputs.size()) || input < 0 || input >= int(state.inputs.size())) {
+    if (calib.active || sweepJob.active || alignJob.active) { err = "another automatic measurement is running"; return {}; }
+    const auto st = engine.status();
+    if (output < 0 || output >= int(state.outputs.size()) || input < 0 || input >= st.numIn) {
         err = "invalid output/input";
         return {};
     }
-    const auto st = engine.status();
+    if (state.outputs[size_t(output)].channel < 0) { err = "that output is not patched to a physical channel"; return {}; }
     if (st.faultMuted || st.muteAll) { err = "outputs are muted: unmute before calibrating"; return {}; }
     calib = {};
     calib.active = true;
-    calib.savedGen = state.gen;
-    calib.savedMeasure = state.measure;
-    state.gen.on = true;
-    state.gen.levelDb = -20.0f;
-    state.gen.targets = { output };
-    state.measure.micInput = input;
-    state.measure.ref = "generator";
-    calibOutput = output;
-    commit(true);
+    calib.output = output;
+    calib.input = input;
+    engine.analyzer().reset();
+    commit();
     return "started";
 }
 
 void Dispatcher::finishCalibration(bool ok, double samples, const juce::String& message)
 {
-    state.gen = calib.savedGen;
-    state.measure = calib.savedMeasure;
     calib.active = false;
     if (ok) {
         const auto st = engine.status();
         state.cal.ioLatency[latencyKey(st.outputDevice, st.inputDevice, st.sampleRate, st.bufferSize)] = samples;
     }
-    commit(true);
-    if (onEvent) {
-        auto e = object();
-        set(e, "event", "calibration");
-        set(e, "ok", ok);
-        set(e, "samples", samples);
-        set(e, "message", message);
-        onEvent(e);
-    }
+    engine.analyzer().reset();
+    commit();
+    emit("calibration", { { "ok", ok }, { "samples", samples }, { "message", message } });
 }
 
 void Dispatcher::timerCallback()
@@ -315,8 +303,9 @@ void Dispatcher::timerCallback()
         ++calib.ticks;
         const auto r = engine.analyzer().result();
         if (r.delayValid) {
-            // Remove the output's own processing delay: what remains is the interface.
-            const double d = r.delaySamples - state.outputs[size_t(calibOutput)].delayMs * 0.001 * r.sampleRate;
+            // Remove the output's own processing delay (delay + FIR): what remains is the interface.
+            const auto& o = state.outputs[size_t(calib.output)];
+            const double d = r.delaySamples - o.delayMs * 0.001 * r.sampleRate - (o.fir.on ? o.fir.latencySamples : 0);
             calib.stable = std::abs(d - calib.last) < 0.05 ? calib.stable + 1 : 0;
             calib.last = d;
             if (calib.stable >= 3) finishCalibration(true, d, "Interface latency measured");
@@ -381,13 +370,22 @@ juce::String Dispatcher::preflight()
 {
     const auto st = engine.status();
     if (st.faultMuted || st.muteAll) return "outputs are muted: unmute first";
-    if (state.measure.micInput < 0) return "choose a measurement mic first";
+    const int mic = state.measure.micSource;
+    if (mic < 0 || state.sources[size_t(mic)].channel < 0) return "choose a measurement mic (a patched source) first";
     if (calib.active || sweepJob.active || alignJob.active) return "another automatic measurement is running";
     return {};
 }
 
 void Dispatcher::applyTransient(Params& p) const
 {
+    if (calib.active) {
+        p.gen.on = true;
+        p.gen.mode = GeneratorParams::Pink;
+        p.gen.levelDb = -20.0f;
+        p.gen.targets = 1ull << calib.output;
+        p.measure.micInput = calib.input;
+        p.measure.ref = RefSource::Generator;
+    }
     if (sweepJob.active && !sweepJob.analysing) {
         p.gen.on = true;
         p.gen.mode = GeneratorParams::Sweep;
@@ -520,6 +518,182 @@ void Dispatcher::finishAlign(const juce::String& error)
     engine.analyzer().reset();
     commit();
     emit("align", { { "stage", "done" }, { "delays", result }, { "snapshot", name } });
+}
+
+} // namespace vt
+
+namespace vt {
+
+bool Dispatcher::replaceState(const SystemState& next, juce::String& err, bool structural)
+{
+    SystemState checked;
+    if (!fromVar(toVar(next), checked, err)) return false;
+    state = std::move(checked);
+    if (structural) loadedFir.fill({}); // outputs moved: re-load FIRs into the right convolutions
+    commit(true);
+    return true;
+}
+
+int Dispatcher::nextFreeOutputChannel(const SystemState& s) const
+{
+    const int n = engine.status().numOut;
+    for (int c = 0; c < n; ++c) {
+        bool used = false;
+        for (auto& o : s.outputs) used |= o.channel == c;
+        if (!used) return c;
+    }
+    return -1;
+}
+
+juce::var Dispatcher::routing(const juce::String& cmd, const juce::var& args, juce::String& err)
+{
+    SystemState next = state;
+    const int index = args.hasProperty("index") ? int(args["index"]) : -1;
+    auto programSources = [&] {
+        std::vector<int> p;
+        for (size_t i = 0; i < next.sources.size(); ++i)
+            if (next.sources[i].type == "program") p.push_back(int(i));
+        return p;
+    };
+
+    if (cmd == "routing.addSource") {
+        if (int(next.sources.size()) >= kMaxSources) { err = "too many sources"; return {}; }
+        SourceConfig src;
+        src.type = args.hasProperty("type") ? args["type"].toString() : "program";
+        src.channel = args.hasProperty("channel") ? int(args["channel"]) : -1;
+        src.name = args.hasProperty("name") ? args["name"].toString()
+                 : (src.type == "mic" ? "Mic " : src.type == "loopback" ? "Loopback " : "Source ") + juce::String(int(next.sources.size()) + 1);
+        next.sources.push_back(src);
+        for (auto& o : next.outputs) o.mix.resize(next.sources.size(), 0.0f);
+        if (src.type == "mic" && next.measure.micSource < 0) next.measure.micSource = int(next.sources.size()) - 1;
+    } else if (cmd == "routing.removeSource") {
+        if (index < 0 || index >= int(next.sources.size())) { err = "no such source"; return {}; }
+        next.removeSource(index);
+    } else if (cmd == "routing.addOutput") {
+        const auto preset = args.hasProperty("preset") ? args["preset"].toString() : "single";
+        const auto prog = programSources();
+        auto make = [&](const juce::String& name, const juce::String& type) {
+            OutputConfig o;
+            o.name = name;
+            o.type = type;
+            o.mix.assign(next.sources.size(), 0.0f);
+            o.channel = nextFreeOutputChannel(next);
+            next.outputs.push_back(o);
+            return int(next.outputs.size()) - 1;
+        };
+        const int room = kMaxOutputs - int(next.outputs.size());
+        if (room < (preset == "stereo" ? 2 : 1)) { err = "too many outputs"; return {}; }
+        if (preset == "stereo") {
+            const int l = make(args.hasProperty("name") ? args["name"].toString() + " L" : "Out L", "main");
+            const int r = make(args.hasProperty("name") ? args["name"].toString() + " R" : "Out R", "main");
+            if (prog.size() >= 2) { next.outputs[size_t(l)].mix[size_t(prog[0])] = 1.0f; next.outputs[size_t(r)].mix[size_t(prog[1])] = 1.0f; }
+        } else if (preset == "sub") {
+            const int s = make(args.hasProperty("name") ? args["name"].toString() : "Sub", "sub");
+            for (size_t k = 0; k < prog.size() && k < 2; ++k) next.outputs[size_t(s)].mix[size_t(prog[k])] = prog.size() >= 2 ? 0.5f : 1.0f;
+            next.outputs[size_t(s)].lp = { "lr24", 100.0f };
+        } else {
+            make(args.hasProperty("name") ? args["name"].toString() : "Out " + juce::String(int(next.outputs.size()) + 1), "full");
+        }
+    } else if (cmd == "routing.removeOutput") {
+        if (index < 0 || index >= int(next.outputs.size())) { err = "no such output"; return {}; }
+        next.removeOutput(index);
+    } else if (cmd == "routing.duplicateOutput") {
+        if (index < 0 || index >= int(next.outputs.size())) { err = "no such output"; return {}; }
+        if (int(next.outputs.size()) >= kMaxOutputs) { err = "too many outputs"; return {}; }
+        auto copy = next.outputs[size_t(index)];
+        copy.name += " copy";
+        copy.channel = nextFreeOutputChannel(next);
+        next.outputs.insert(next.outputs.begin() + index + 1, copy);
+    } else if (cmd == "routing.moveOutput") {
+        const int to = int(args["to"]);
+        if (index < 0 || index >= int(next.outputs.size()) || to < 0 || to >= int(next.outputs.size())) { err = "no such output"; return {}; }
+        auto o = next.outputs[size_t(index)];
+        next.outputs.erase(next.outputs.begin() + index);
+        next.outputs.insert(next.outputs.begin() + to, o);
+        next.gen.targets.clear();
+    } else {
+        err = "unknown command: " + cmd;
+        return {};
+    }
+    if (!replaceState(next, err, true)) return {};
+    return toVar(state);
+}
+
+// Snapshots carry the patch. On the device they were made on (or with an explicit
+// `remap`) they apply directly; on another interface the reply asks for a remap,
+// prefilled: same name -> same channel, else same channel number if it exists.
+juce::var Dispatcher::recallSnapshot(const juce::var& args, juce::String& err)
+{
+    SnapshotData snap;
+    if (!snapshots.load(args["name"].toString(), snap, err)) return {};
+    const auto st = engine.status();
+    SystemState next = state;
+
+    if (!snap.hasPatch) {
+        // Version 1: outputs were physical channels, mixes indexed by physical input.
+        for (size_t o = 0; o < snap.outputs.size(); ++o) {
+            auto& out = snap.outputs[o];
+            out.channel = int(o) < st.numOut || st.numOut == 0 ? int(o) : -1;
+            std::vector<float> mix(state.sources.size(), 0.0f);
+            for (size_t phys = 0; phys < out.mix.size(); ++phys)
+                for (size_t s = 0; s < state.sources.size(); ++s)
+                    if (state.sources[s].type == "program" && state.sources[s].channel == int(phys)) { mix[s] = out.mix[phys]; break; }
+            out.mix = mix;
+        }
+        next.outputs = snap.outputs;
+        if (!replaceState(next, err, true)) return {};
+        return toVar(state);
+    }
+
+    const bool sameDevice = snap.inputDevice == state.device.inputDevice && snap.outputDevice == state.device.outputDevice;
+    const auto& remap = args["remap"];
+    if (!sameDevice && !remap.isObject()) {
+        auto prefill = [](const juce::String& name, int ch, int count, auto& current) {
+            for (auto& c : current)
+                if (c.name == name) return c.channel;
+            return ch < count ? ch : -1;
+        };
+        juce::Array<juce::var> srcs, outs;
+        for (auto& s : snap.sources) {
+            auto x = juce::var(new juce::DynamicObject());
+            x.getDynamicObject()->setProperty("name", s.name);
+            x.getDynamicObject()->setProperty("type", s.type);
+            x.getDynamicObject()->setProperty("was", s.channel);
+            x.getDynamicObject()->setProperty("channel", prefill(s.name, s.channel, st.numIn, state.sources));
+            srcs.add(x);
+        }
+        std::vector<int> used;
+        for (auto& o : snap.outputs) {
+            int ch = prefill(o.name, o.channel, st.numOut, state.outputs);
+            if (std::find(used.begin(), used.end(), ch) != used.end()) ch = -1;
+            if (ch >= 0) used.push_back(ch);
+            auto x = juce::var(new juce::DynamicObject());
+            x.getDynamicObject()->setProperty("name", o.name);
+            x.getDynamicObject()->setProperty("was", o.channel);
+            x.getDynamicObject()->setProperty("channel", ch);
+            outs.add(x);
+        }
+        auto r = juce::var(new juce::DynamicObject());
+        r.getDynamicObject()->setProperty("needsRemap", true);
+        r.getDynamicObject()->setProperty("name", args["name"]);
+        r.getDynamicObject()->setProperty("fromInput", snap.inputDevice);
+        r.getDynamicObject()->setProperty("fromOutput", snap.outputDevice);
+        r.getDynamicObject()->setProperty("sources", srcs);
+        r.getDynamicObject()->setProperty("outputs", outs);
+        return r;
+    }
+    if (remap.isObject()) {
+        const auto* rs = remap["sources"].getArray();
+        const auto* ro = remap["outputs"].getArray();
+        for (size_t i = 0; rs && i < snap.sources.size() && int(i) < rs->size(); ++i) snap.sources[i].channel = int((*rs)[int(i)]);
+        for (size_t i = 0; ro && i < snap.outputs.size() && int(i) < ro->size(); ++i) snap.outputs[i].channel = int((*ro)[int(i)]);
+    }
+    next.sources = snap.sources;
+    next.outputs = snap.outputs;
+    if (next.measure.micSource >= int(next.sources.size())) next.measure.micSource = -1;
+    if (next.measure.refSource >= int(next.sources.size())) { next.measure.refSource = -1; next.measure.ref = "generator"; }
+    if (!replaceState(next, err, true)) return {};
+    return toVar(state);
 }
 
 } // namespace vt

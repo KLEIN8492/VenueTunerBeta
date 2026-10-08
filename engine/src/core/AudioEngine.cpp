@@ -1,4 +1,5 @@
 #include "core/AudioEngine.h"
+#include "core/LatencyInfo.h"
 
 namespace vt {
 
@@ -88,6 +89,28 @@ juce::var AudioEngine::listDevices()
     root.getDynamicObject()->setProperty("sampleRates", rates);
     root.getDynamicObject()->setProperty("bufferSizes", buffers);
     return root;
+}
+
+juce::var AudioEngine::channelNames()
+{
+    auto v = juce::var(new juce::DynamicObject());
+    juce::Array<juce::var> ins, outs;
+    if (auto* dev = dm.getCurrentAudioDevice()) {
+        const auto inNames = dev->getInputChannelNames(), outNames = dev->getOutputChannelNames();
+        const int ni = dev->getActiveInputChannels().countNumberOfSetBits(), no = dev->getActiveOutputChannels().countNumberOfSetBits();
+        for (int i = 0; i < ni; ++i) ins.add(i < inNames.size() && inNames[i].isNotEmpty() ? inNames[i] : "In " + juce::String(i + 1));
+        for (int i = 0; i < no; ++i) outs.add(i < outNames.size() && outNames[i].isNotEmpty() ? outNames[i] : "Out " + juce::String(i + 1));
+    }
+    v.getDynamicObject()->setProperty("inputs", ins);
+    v.getDynamicObject()->setProperty("outputs", outs);
+    return v;
+}
+
+juce::var AudioEngine::latencyBreakdown()
+{
+    const auto setup = dm.getAudioDeviceSetup();
+    auto* dev = dm.getCurrentAudioDevice();
+    return vt::latencyBreakdown(setup.inputDeviceName, setup.outputDeviceName, dev ? dev->getCurrentBufferSizeSamples() : 0);
 }
 
 AudioEngine::Status AudioEngine::status()
@@ -211,9 +234,13 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
         if (pk > inPeak[size_t(c)].load(std::memory_order_relaxed)) inPeak[size_t(c)].store(pk, std::memory_order_relaxed);
     }
 
-    for (int o = 0; o < numOut; ++o) {
-        if (out[o] == nullptr) continue;
-        if (o >= p.numOut || o >= kMaxCh) { juce::FloatVectorOperations::clear(out[o], n); continue; }
+    // Physical outputs nothing is patched to stay silent.
+    for (int c = 0; c < numOut; ++c)
+        if (out[c] != nullptr) juce::FloatVectorOperations::clear(out[c], n);
+
+    // Each logical output: sum its program inputs (+ generator) → chain → its physical channel.
+    // Unassigned outputs are still processed (meters, filter state) but go nowhere.
+    for (int o = 0; o < p.numOut && o < kMaxCh; ++o) {
         const auto& op = p.out[o];
         float* buf = mixBuf.data();
         juce::FloatVectorOperations::clear(buf, n);
@@ -223,7 +250,8 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
         if (p.gen.targets >> o & 1u)
             juce::FloatVectorOperations::add(buf, genBuf.data(), n);
         chains[size_t(o)].process(op, buf, n, silence);
-        juce::FloatVectorOperations::copy(out[o], buf, n);
+        if (op.channel >= 0 && op.channel < numOut && out[op.channel] != nullptr)
+            juce::FloatVectorOperations::copy(out[op.channel], buf, n);
     }
 
     // Measurement: reference = generator (internal loopback) or a physical input.

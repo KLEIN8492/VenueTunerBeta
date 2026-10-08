@@ -13,10 +13,12 @@ struct DeviceConfig
     int bufferSize = 64;
 };
 
-struct InputConfig
+// A named signal coming in on a physical input channel.
+struct SourceConfig
 {
     juce::String name;
-    juce::String role = "console"; // console | mic | loopback | none
+    juce::String type = "program"; // program (may feed outputs) | mic | loopback (measurement only)
+    int channel = -1;              // physical input, -1 = unpatched
 };
 
 struct PeqBand
@@ -46,18 +48,20 @@ struct FirConfig
     int taps = 0, latencySamples = 0; // filled in by the engine when loaded
 };
 
-constexpr int kMaxPeq = 16, kMaxAp = 4;
+constexpr int kMaxPeq = 16, kMaxAp = 4, kMaxSources = 64, kMaxOutputs = 64;
 
+// A user-defined processing channel, patched to one physical output (or none).
 struct OutputConfig
 {
     juce::String name, type = "full", colour = "#7fb2ff";
+    int channel = -1; // physical output, -1 = unassigned (processed, silent)
     float gainDb = 0.0f;
     bool polarityInvert = false;
     float delayMs = 0.0f;
     bool mute = false;
     bool limiterOn = true;
     float limThreshDb = -1.0f, limAttackMs = 0.0f, limReleaseMs = 100.0f;
-    std::vector<float> mix; // linear gain per input
+    std::vector<float> mix; // linear gain per source (program sources only take effect)
     std::vector<PeqBand> peq;
     XoConfig hp, lp;
     std::vector<ApBand> ap;
@@ -74,9 +78,9 @@ struct GeneratorConfig
 
 struct MeasureConfig
 {
-    int micInput = -1;
-    juce::String ref = "generator"; // generator | input
-    int refInput = -1;
+    int micSource = -1;             // index into sources
+    juce::String ref = "generator"; // generator (internal loopback) | source
+    int refSource = -1;
     int averaging = 16;
     int smoothing = 24; // 1/N octave, 0 = none
     bool multiWindow = true;
@@ -91,20 +95,25 @@ struct CalibrationData
 struct SystemState
 {
     DeviceConfig device;
-    std::vector<InputConfig> inputs;
+    std::vector<SourceConfig> sources;
     std::vector<OutputConfig> outputs;
     GeneratorConfig gen;
     MeasureConfig measure;
     CalibrationData cal;
 
-    // Match the channel counts of the open device, keeping existing settings.
-    void resizeIO(int numIn, int numOut);
+    // First run only (no sources, no outputs): Input 1/2 and Main L/R patched 1:1, unrouted.
+    void ensureDefaults(int numIn, int numOut);
+    // Remove a source and its mix column; fix measurement references.
+    void removeSource(int index);
+    void removeOutput(int index);
 };
 
 constexpr float kGeneratorMaxDb = -12.0f; // dBFS RMS hard cap (pink crest ~12 dB)
 
 juce::var toVar(const SystemState&);
 juce::var outputsToVar(const std::vector<OutputConfig>&);
+juce::var sourcesToVar(const std::vector<SourceConfig>&);
+bool sourcesFromVar(const juce::var&, std::vector<SourceConfig>& out, juce::String& error);
 // All-or-nothing: `out` is only written when the whole document is valid.
 bool fromVar(const juce::var&, SystemState& out, juce::String& error);
 bool outputsFromVar(const juce::var&, std::vector<OutputConfig>& out, juce::String& error);

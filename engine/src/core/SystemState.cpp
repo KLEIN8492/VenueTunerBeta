@@ -4,20 +4,41 @@
 
 namespace vt {
 
-void SystemState::resizeIO(int numIn, int numOut)
+void SystemState::ensureDefaults(int numIn, int numOut)
 {
-    numIn = std::clamp(numIn, 0, kMaxCh);
-    numOut = std::clamp(numOut, 0, kMaxCh);
-    for (int i = int(inputs.size()); i < numIn; ++i)
-        inputs.push_back({ "In " + juce::String(i + 1), "console" });
-    inputs.resize(size_t(numIn));
-    for (int o = int(outputs.size()); o < numOut; ++o) {
+    if (!sources.empty() || !outputs.empty()) return;
+    for (int i = 0; i < std::min(numIn, 2); ++i)
+        sources.push_back({ "Input " + juce::String(i + 1), "program", i });
+    const char* names[] = { "Main L", "Main R" };
+    for (int o = 0; o < std::min(numOut, 2); ++o) {
         OutputConfig c;
-        c.name = "Out " + juce::String(o + 1);
+        c.name = numOut == 1 ? "Main" : names[o];
+        c.channel = o;
+        c.mix.assign(sources.size(), 0.0f); // unrouted: route explicitly (a built-in mic must not hit the PA)
         outputs.push_back(c);
     }
-    outputs.resize(size_t(numOut));
-    for (auto& o : outputs) o.mix.resize(size_t(numIn), 0.0f);
+}
+
+void SystemState::removeSource(int index)
+{
+    if (index < 0 || index >= int(sources.size())) return;
+    sources.erase(sources.begin() + index);
+    for (auto& o : outputs)
+        if (index < int(o.mix.size())) o.mix.erase(o.mix.begin() + index);
+    auto fix = [index](int& ref) { ref = ref == index ? -1 : (ref > index ? ref - 1 : ref); };
+    fix(measure.micSource);
+    fix(measure.refSource);
+    if (measure.ref == "source" && measure.refSource < 0) measure.ref = "generator";
+}
+
+void SystemState::removeOutput(int index)
+{
+    if (index < 0 || index >= int(outputs.size())) return;
+    outputs.erase(outputs.begin() + index);
+    std::vector<int> t;
+    for (int x : gen.targets)
+        if (x != index) t.push_back(x > index ? x - 1 : x);
+    gen.targets = t;
 }
 
 // ---------------------------------------------------------------- serialisation
@@ -40,6 +61,7 @@ juce::var outputToVar(const OutputConfig& o)
     d->setProperty("name", o.name);
     d->setProperty("type", o.type);
     d->setProperty("colour", o.colour);
+    d->setProperty("channel", o.channel);
     d->setProperty("gainDb", o.gainDb);
     d->setProperty("polarityInvert", o.polarityInvert);
     d->setProperty("delayMs", o.delayMs);
@@ -201,6 +223,7 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
     if (!v.isObject()) { err = ctx + "expected an object"; return false; }
     Reader r { v, ctx, err };
     return r.str("name", o.name) && r.str("type", o.type) && r.str("colour", o.colour)
+        && r.integer("channel", o.channel, -1, kMaxCh - 1)
         && r.num("gainDb", o.gainDb, -80, 12) && r.boolean("polarityInvert", o.polarityInvert)
         && r.num("delayMs", o.delayMs, 0, 1000) && r.boolean("mute", o.mute)
         && r.boolean("limiterOn", o.limiterOn) && r.num("limThreshDb", o.limThreshDb, -40, 0)
@@ -218,7 +241,59 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
         && fir(v, o.fir, ctx, err);
 }
 
+// Pre-patch files (milestones 1–2): `inputs` with roles, outputs = physical channels,
+// mixes indexed by physical input, measurement by physical input.
+void migrateLegacy(const juce::var& v, SystemState& s)
+{
+    std::vector<int> map; // old input index -> source index
+    if (const auto* a = v["inputs"].getArray())
+        for (int i = 0; i < a->size(); ++i) {
+            const auto role = (*a)[i]["role"].toString();
+            if (role == "none" || i >= kMaxCh) { map.push_back(-1); continue; }
+            map.push_back(int(s.sources.size()));
+            s.sources.push_back({ (*a)[i]["name"].toString(), role == "console" ? "program" : role, i });
+        }
+    for (size_t o = 0; o < s.outputs.size(); ++o) {
+        auto& out = s.outputs[o];
+        out.channel = int(o);
+        std::vector<float> mix(s.sources.size(), 0.0f);
+        for (size_t i = 0; i < out.mix.size() && i < map.size(); ++i)
+            if (map[i] >= 0) mix[size_t(map[i])] = out.mix[i];
+        out.mix = mix;
+    }
+    const auto& m = v["measure"];
+    auto mapped = [&](const juce::var& x) { const int i = x.isVoid() ? -1 : int(x); return i >= 0 && i < int(map.size()) ? map[size_t(i)] : -1; };
+    s.measure.micSource = mapped(m["micInput"]);
+    if (m["ref"].toString() == "input") {
+        s.measure.refSource = mapped(m["refInput"]);
+        s.measure.ref = s.measure.refSource >= 0 ? "source" : "generator";
+    }
+}
+
 } // namespace
+
+juce::var sourcesToVar(const std::vector<SourceConfig>& src)
+{
+    juce::Array<juce::var> a;
+    for (auto& x : src) {
+        auto v = obj();
+        v.getDynamicObject()->setProperty("name", x.name);
+        v.getDynamicObject()->setProperty("type", x.type);
+        v.getDynamicObject()->setProperty("channel", x.channel);
+        a.add(v);
+    }
+    return a;
+}
+
+bool sourcesFromVar(const juce::var& v, std::vector<SourceConfig>& out, juce::String& err)
+{
+    auto holder = obj();
+    holder.getDynamicObject()->setProperty("sources", v);
+    return objects(holder, "sources", out, kMaxSources, "", err, [](Reader& r, SourceConfig& x) {
+        return r.str("name", x.name) && r.str("type", x.type, { "program", "mic", "loopback" })
+            && r.integer("channel", x.channel, -1, kMaxCh - 1);
+    });
+}
 
 juce::var outputsToVar(const std::vector<OutputConfig>& outs)
 {
@@ -239,14 +314,7 @@ juce::var toVar(const SystemState& s)
     dev.getDynamicObject()->setProperty("bufferSize", s.device.bufferSize);
     r->setProperty("device", dev);
 
-    juce::Array<juce::var> ins;
-    for (auto& i : s.inputs) {
-        auto v = obj();
-        v.getDynamicObject()->setProperty("name", i.name);
-        v.getDynamicObject()->setProperty("role", i.role);
-        ins.add(v);
-    }
-    r->setProperty("inputs", ins);
+    r->setProperty("sources", sourcesToVar(s.sources));
     r->setProperty("outputs", outputsToVar(s.outputs));
 
     auto g = obj();
@@ -257,9 +325,9 @@ juce::var toVar(const SystemState& s)
     r->setProperty("gen", g);
 
     auto m = obj();
-    m.getDynamicObject()->setProperty("micInput", s.measure.micInput);
+    m.getDynamicObject()->setProperty("micSource", s.measure.micSource);
     m.getDynamicObject()->setProperty("ref", s.measure.ref);
-    m.getDynamicObject()->setProperty("refInput", s.measure.refInput);
+    m.getDynamicObject()->setProperty("refSource", s.measure.refSource);
     m.getDynamicObject()->setProperty("averaging", s.measure.averaging);
     m.getDynamicObject()->setProperty("smoothing", s.measure.smoothing);
     m.getDynamicObject()->setProperty("multiWindow", s.measure.multiWindow);
@@ -278,7 +346,7 @@ bool outputsFromVar(const juce::var& v, std::vector<OutputConfig>& out, juce::St
 {
     const auto* a = v.getArray();
     if (a == nullptr) { err = "outputs: expected an array"; return false; }
-    if (a->size() > kMaxCh) { err = "outputs: too many"; return false; }
+    if (a->size() > kMaxOutputs) { err = "outputs: at most " + juce::String(kMaxOutputs); return false; }
     std::vector<OutputConfig> tmp(size_t(a->size()));
     for (int i = 0; i < a->size(); ++i)
         if (!outputFromVar((*a)[i], tmp[size_t(i)], "outputs/" + juce::String(i) + "/", err)) return false;
@@ -297,17 +365,10 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
               && r.num("sampleRate", s.device.sampleRate, 22050, 192000)
               && r.integer("bufferSize", s.device.bufferSize, 16, 4096))) return false;
     }
-    if (v.hasProperty("inputs")) {
-        const auto* a = v["inputs"].getArray();
-        if (a == nullptr || a->size() > kMaxCh) { err = "inputs: expected an array"; return false; }
-        for (int i = 0; i < a->size(); ++i) {
-            InputConfig in;
-            Reader r { (*a)[i], "inputs/" + juce::String(i) + "/", err };
-            if (!(r.str("name", in.name) && r.str("role", in.role, { "console", "mic", "loopback", "none" }))) return false;
-            s.inputs.push_back(in);
-        }
-    }
+    if (v.hasProperty("sources") && !sourcesFromVar(v["sources"], s.sources, err)) return false;
     if (v.hasProperty("outputs") && !outputsFromVar(v["outputs"], s.outputs, err)) return false;
+    const bool legacy = v.hasProperty("inputs") && !v.hasProperty("sources");
+    if (legacy) migrateLegacy(v, s);
     if (v.hasProperty("gen")) {
         Reader r { v["gen"], "gen/", err };
         if (!(r.boolean("on", s.gen.on) && r.str("signal", s.gen.signal, { "pink" })
@@ -316,10 +377,10 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
     }
     if (v.hasProperty("measure")) {
         Reader r { v["measure"], "measure/", err };
-        if (!(r.integer("micInput", s.measure.micInput, -1, kMaxCh - 1)
-              && r.str("ref", s.measure.ref, { "generator", "input" })
-              && r.integer("refInput", s.measure.refInput, -1, kMaxCh - 1)
-              && r.integer("averaging", s.measure.averaging, 1, 256)
+        if (!legacy && !(r.integer("micSource", s.measure.micSource, -1, kMaxSources - 1)
+              && r.str("ref", s.measure.ref, { "generator", "source" })
+              && r.integer("refSource", s.measure.refSource, -1, kMaxSources - 1))) return false;
+        if (!(r.integer("averaging", s.measure.averaging, 1, 256)
               && r.integer("smoothing", s.measure.smoothing, 0, 48)
               && r.boolean("multiWindow", s.measure.multiWindow))) return false;
     }
@@ -333,8 +394,21 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
                 s.cal.ioLatency[p.name.toString()] = double(p.value);
             }
     }
-    // Keep mix rows consistent with the input count.
-    for (auto& o : s.outputs) o.mix.resize(s.inputs.size(), 0.0f);
+    // Cross-checks: mix rows match the source list; references exist; one output per channel.
+    for (auto& o : s.outputs) o.mix.resize(s.sources.size(), 0.0f);
+    if (s.measure.micSource >= int(s.sources.size())) { err = "measure/micSource: no such source"; return false; }
+    if (s.measure.refSource >= int(s.sources.size())) { err = "measure/refSource: no such source"; return false; }
+    for (size_t a = 0; a < s.outputs.size(); ++a)
+        for (size_t b = a + 1; b < s.outputs.size(); ++b)
+            if (s.outputs[a].channel >= 0 && s.outputs[a].channel == s.outputs[b].channel) {
+                err = "outputs/" + juce::String(int(b)) + "/channel: physical output " + juce::String(s.outputs[b].channel + 1)
+                    + " is already used by \"" + s.outputs[a].name + "\"";
+                return false;
+            }
+    std::vector<int> targets;
+    for (int t : s.gen.targets)
+        if (t < int(s.outputs.size())) targets.push_back(t);
+    s.gen.targets = targets;
     out = std::move(s);
     return true;
 }
@@ -397,19 +471,26 @@ Params toParams(const SystemState& s, double sampleRate)
         q.limThreshDb = c.limThreshDb;
         q.limAttackMs = c.limAttackMs;
         q.limReleaseMs = c.limReleaseMs;
-        for (size_t i = 0; i < c.mix.size() && i < size_t(kMaxCh); ++i) q.mix[i] = c.mix[i];
+        q.channel = c.channel;
+        // Resolve the source mix to physical input gains. Only program sources can feed
+        // an output: measurement mics and loopbacks never reach the PA.
+        for (size_t i = 0; i < c.mix.size() && i < s.sources.size(); ++i) {
+            const auto& src = s.sources[i];
+            if (src.type == "program" && src.channel >= 0 && src.channel < kMaxCh) q.mix[src.channel] += c.mix[i];
+        }
         designOutputIir(c, sampleRate, q.iir);
         q.firOn = c.fir.on && c.fir.taps > 0;
     }
-    for (size_t i = 0; i < s.inputs.size() && i < size_t(kMaxCh); ++i)
-        if (s.inputs[i].role == "console") p.consoleInputs |= (1ull << i);
+    for (const auto& src : s.sources)
+        if (src.type == "program" && src.channel >= 0 && src.channel < kMaxCh) p.consoleInputs |= (1ull << src.channel);
     p.gen.on = s.gen.on;
     p.gen.levelDb = s.gen.levelDb;
     for (int t : s.gen.targets)
         if (t >= 0 && t < kMaxCh) p.gen.targets |= (1ull << t);
-    p.measure.micInput = s.measure.micInput;
-    p.measure.ref = s.measure.ref == "input" ? RefSource::PhysicalInput : RefSource::Generator;
-    p.measure.refInput = s.measure.refInput;
+    auto channelOf = [&](int src) { return src >= 0 && src < int(s.sources.size()) ? s.sources[size_t(src)].channel : -1; };
+    p.measure.micInput = channelOf(s.measure.micSource);
+    p.measure.ref = s.measure.ref == "source" ? RefSource::PhysicalInput : RefSource::Generator;
+    p.measure.refInput = channelOf(s.measure.refSource);
     return p;
 }
 

@@ -17,7 +17,7 @@ struct Fixture
         dir.deleteRecursively();
         engine.prepareForTest(48000, 64, 2, 2);
         d = std::make_unique<vt::Dispatcher>(engine, dir);
-        d->stateForTest().resizeIO(2, 2);
+        d->stateForTest().ensureDefaults(2, 2);
         d->onStateChanged = [this] { ++stateEvents; };
     }
     ~Fixture() { d.reset(); dir.deleteRecursively(); }
@@ -80,4 +80,61 @@ TEST_CASE("Dispatcher: io latency key and driver fallback")
     CHECK(f.d->ioLatency("Out", "In", 48000, 64, 200).samples == 300);
     CHECK(f.d->ioLatency("Out", "In", 48000, 64, 200).calibrated);
     CHECK(f.d->ioLatency("Out", "In", 48000, 128, 200).samples == 200);
+}
+
+TEST_CASE("Dispatcher: routing commands")
+{
+    Fixture f;
+    auto r = f.d->handle(cmd(R"({"id":1,"cmd":"routing.addSource","args":{"type":"mic","channel":1}})"));
+    REQUIRE(bool(r["ok"]));
+    auto& s = f.d->stateForTest();
+    CHECK(s.sources.size() == 3);
+    CHECK(s.measure.micSource == 2);       // first mic becomes the measurement mic
+    CHECK(s.outputs[0].mix.size() == 3);
+
+    r = f.d->handle(cmd(R"({"id":2,"cmd":"routing.addOutput","args":{"preset":"sub"}})"));
+    REQUIRE(bool(r["ok"]));
+    CHECK(s.outputs.size() == 3);
+    CHECK(s.outputs[2].name == "Sub");
+    CHECK(s.outputs[2].mix[0] == 0.5f);
+    CHECK(s.outputs[2].lp.type == "lr24");
+    CHECK(s.outputs[2].channel == -1);     // no free channel on a device that isn't open
+
+    r = f.d->handle(cmd(R"({"id":3,"cmd":"routing.removeSource","args":{"index":0}})"));
+    REQUIRE(bool(r["ok"]));
+    CHECK(s.sources.size() == 2);
+    CHECK(s.measure.micSource == 1);
+    CHECK(s.outputs[2].mix.size() == 2);
+
+    r = f.d->handle(cmd(R"({"id":4,"cmd":"routing.removeOutput","args":{"index":9}})"));
+    CHECK_FALSE(bool(r["ok"]));
+}
+
+TEST_CASE("Dispatcher: snapshot on another interface asks for a remap")
+{
+    Fixture f;
+    auto& s = f.d->stateForTest();
+    s.device.inputDevice = s.device.outputDevice = "Interface A";
+    s.outputs[1].channel = 1;
+    f.d->handle(cmd(R"({"id":1,"cmd":"snapshot.save","args":{"name":"Show"}})"));
+    f.d->handle(cmd(R"({"id":2,"cmd":"state.patch","args":{"path":"outputs/0/gainDb","value":-9}})"));
+
+    s.device.inputDevice = s.device.outputDevice = "Interface B";
+    auto r = f.d->handle(cmd(R"({"id":3,"cmd":"snapshot.recall","args":{"name":"Show"}})"));
+    REQUIRE(bool(r["ok"]));
+    CHECK(bool(r["result"]["needsRemap"]));
+    CHECK(r["result"]["outputs"].size() == 2);
+    CHECK(s.outputs[0].gainDb == -9.0f);   // nothing applied yet
+
+    r = f.d->handle(cmd(R"({"id":4,"cmd":"snapshot.recall","args":{"name":"Show","remap":{"sources":[4,5],"outputs":[6,-1]}}})"));
+    REQUIRE(bool(r["ok"]));
+    CHECK(s.outputs[0].gainDb == 0.0f);
+    CHECK(s.outputs[0].channel == 6);
+    CHECK(s.outputs[1].channel == -1);
+    CHECK(s.sources[0].channel == 4);
+
+    s.device.inputDevice = s.device.outputDevice = "Interface A"; // same device: applies directly
+    f.d->handle(cmd(R"({"id":5,"cmd":"snapshot.save","args":{"name":"Show2"}})"));
+    r = f.d->handle(cmd(R"({"id":6,"cmd":"snapshot.recall","args":{"name":"Show2"}})"));
+    CHECK_FALSE(r["result"].hasProperty("needsRemap"));
 }

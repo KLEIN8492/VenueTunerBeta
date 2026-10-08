@@ -5,13 +5,14 @@
 static vt::SystemState sample()
 {
     vt::SystemState s;
-    s.resizeIO(2, 4);
+    s.sources = { { "Console L", "program", 0 }, { "Mic FOH", "mic", 1 } };
+    s.outputs.resize(4);
+    for (int i = 0; i < 4; ++i) { s.outputs[size_t(i)].name = "Out " + juce::String(i + 1); s.outputs[size_t(i)].channel = i; s.outputs[size_t(i)].mix = { 0, 0 }; }
     s.outputs[0].name = "Main L";
     s.outputs[0].mix[0] = 1.0f;
     s.outputs[3].name = "Sub";
     s.outputs[3].mix = { 0.5f, 0.5f };
     s.outputs[3].delayMs = 4.5f;
-    s.inputs[1].role = "mic";
     s.gen.targets = { 0, 3 };
     s.cal.ioLatency["BlackHole|BlackHole|48000|64"] = 192.0;
     return s;
@@ -53,10 +54,14 @@ TEST_CASE("toParams maps state to the audio-thread structure")
     auto s = sample();
     s.outputs[1].polarityInvert = true;
     s.gen.on = true;
-    s.measure.micInput = 1;
+    s.measure.micSource = 1;
+    s.outputs[2].channel = 9;
     auto p = vt::toParams(s);
     CHECK(p.numOut == 4);
     CHECK(p.out[3].mix[0] == 0.5f);
+    CHECK(p.out[3].mix[1] == 0.0f); // the mic source is never routed, even with a mix value
+    CHECK(p.out[2].channel == 9);
+    CHECK(p.consoleInputs == 1ull);
     CHECK(p.out[1].polarityInvert);
     CHECK(p.gen.on);
     CHECK(p.gen.targets == ((1ull << 0) | (1ull << 3)));
@@ -74,14 +79,16 @@ TEST_CASE("Snapshots save, recall, reject corrupt files, autosave")
     CHECK(snaps.list().contains("Show A"));
 
     s.outputs[0].gainDb = -10.0f;
-    REQUIRE(snaps.recall("Show A", s, err));
-    CHECK(s.outputs[0].gainDb == 0.0f);
-    CHECK(s.outputs[0].name == "Main L");
+    vt::SnapshotData d;
+    REQUIRE(snaps.load("Show A", d, err));
+    CHECK(d.hasPatch);
+    CHECK(d.outputs[0].gainDb == 0.0f);
+    CHECK(d.outputs[0].name == "Main L");
+    CHECK(d.sources[1].name == "Mic FOH");
 
     dir.getChildFile("snapshots/Broken.json").replaceWithText("{ not json");
     s.outputs[0].gainDb = -7.0f;
-    CHECK_FALSE(snaps.recall("Broken", s, err));
-    CHECK(s.outputs[0].gainDb == -7.0f); // untouched
+    CHECK_FALSE(snaps.load("Broken", d, err));
 
     snaps.autosave(s);
     vt::SystemState loaded;
@@ -130,6 +137,52 @@ TEST_CASE("Filter config round-trips and validates")
     }
     CHECK_FALSE(vt::applyPatch(s, "outputs/0/peq", many, err)); // > 16 bands
     CHECK(err.contains("16"));
+}
+
+TEST_CASE("Pre-patch state migrates to sources and patched outputs")
+{
+    auto v = juce::JSON::parse(R"({
+        "inputs":[{"name":"Mic","role":"mic"},{"name":"Unused","role":"none"},{"name":"Desk L","role":"console"},{"name":"Desk R","role":"console"}],
+        "outputs":[{"name":"Out 1","mix":[0,0,1,0]},{"name":"Out 2","mix":[0,0,0,1]}],
+        "measure":{"micInput":0,"ref":"generator"}})");
+    vt::SystemState s;
+    juce::String err;
+    REQUIRE(vt::fromVar(v, s, err));
+    REQUIRE(s.sources.size() == 3); // "none" dropped
+    CHECK(s.sources[0].type == "mic");
+    CHECK(s.sources[1].name == "Desk L");
+    CHECK(s.sources[1].type == "program");
+    CHECK(s.sources[1].channel == 2);
+    CHECK(s.outputs[1].channel == 1);
+    CHECK(s.outputs[0].mix == std::vector<float> { 0, 1, 0 });
+    CHECK(s.outputs[1].mix == std::vector<float> { 0, 0, 1 });
+    CHECK(s.measure.micSource == 0);
+    // Saved again, it is in the new format.
+    CHECK(vt::toVar(s).hasProperty("sources"));
+    CHECK_FALSE(vt::toVar(s).hasProperty("inputs"));
+}
+
+TEST_CASE("Patch rules: one output per channel, removing a source fixes references")
+{
+    auto s = sample();
+    juce::String err;
+    CHECK_FALSE(vt::applyPatch(s, "outputs/1/channel", 0, err)); // channel 0 used by Main L
+    CHECK(err.contains("Main L"));
+    CHECK(vt::applyPatch(s, "outputs/1/channel", -1, err));     // unassigned is fine
+    CHECK(vt::applyPatch(s, "outputs/2/channel", -1, err));     // several unassigned too
+
+    s.measure.micSource = 1;
+    s.removeSource(0);
+    CHECK(s.sources.size() == 1);
+    CHECK(s.measure.micSource == 0);
+    CHECK(s.outputs[3].mix == std::vector<float> { 0.5f });
+
+    vt::SystemState fresh;
+    fresh.ensureDefaults(1, 2);
+    CHECK(fresh.sources.size() == 1);
+    CHECK(fresh.outputs.size() == 2);
+    CHECK(fresh.outputs[1].channel == 1);
+    CHECK(fresh.outputs[0].mix[0] == 0.0f); // never routed by default
 }
 
 TEST_CASE("Milestone 1 snapshots without filter fields still load")

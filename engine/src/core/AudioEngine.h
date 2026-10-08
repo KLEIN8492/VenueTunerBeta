@@ -40,6 +40,8 @@ public:
     juce::String openDevice(const DeviceConfig&);
     void closeDevice();
     juce::var listDevices();
+    juce::var channelNames();     // {inputs:[..], outputs:[..]} driver channel names
+    juce::var latencyBreakdown(); // per-direction driver latency components
 
     void setParams(const Params& p) { params.write(p); }
     // Any thread: the convolution swaps the IR in on its background thread and crossfades.

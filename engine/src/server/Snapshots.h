@@ -3,8 +3,19 @@
 
 namespace vt {
 
-// Named snapshots of the processing (outputs: routing + chain) and the autosaved full
-// state, stored as JSON under `dir`. Writes go to a temp file then rename (atomic).
+// What a snapshot file contains. Version 2 carries the patch (sources + output channels)
+// and the device it was made on; version 1 files (outputs only, mixes indexed by physical
+// input) load with hasPatch = false.
+struct SnapshotData
+{
+    bool hasPatch = false;
+    juce::String inputDevice, outputDevice;
+    std::vector<SourceConfig> sources;
+    std::vector<OutputConfig> outputs;
+};
+
+// Named snapshots and the autosaved full state, stored as JSON under `dir`.
+// Writes go to a temp file then rename (atomic).
 class Snapshots
 {
 public:
@@ -12,8 +23,7 @@ public:
 
     juce::StringArray list() const;
     bool save(const juce::String& name, const SystemState&, juce::String& error);
-    // Replaces state.outputs only if the snapshot is valid and matches the input count.
-    bool recall(const juce::String& name, SystemState&, juce::String& error) const;
+    bool load(const juce::String& name, SnapshotData& out, juce::String& error) const;
     bool remove(const juce::String& name);
     juce::File fileFor(const juce::String& name) const;
 

@@ -44,6 +44,11 @@ private:
     void syncFirs(); // (re)load FIR files whose path changed (snapshot recall, start-up)
     bool loadFirFile(int output, const juce::String& path, juce::String& error);
     juce::var openDevice(const DeviceConfig&, juce::String& error);
+    // Validate a whole new state (round-trip through JSON) and make it current.
+    bool replaceState(const SystemState& next, juce::String& error, bool structural);
+    juce::var routing(const juce::String& cmd, const juce::var& args, juce::String& error);
+    juce::var recallSnapshot(const juce::var& args, juce::String& error);
+    int nextFreeOutputChannel(const SystemState&) const;
     juce::var startLatencyCalibration(int output, int input, juce::String& error);
     void finishCalibration(bool ok, double samples, const juce::String& message);
     juce::var startSweep(double seconds, juce::String& error);
@@ -65,13 +70,11 @@ private:
     struct Calibration
     {
         bool active = false;
-        GeneratorConfig savedGen;
-        MeasureConfig savedMeasure;
+        int output = 0, input = 0; // logical output, physical input
         int ticks = 0;
         double last = -1;
         int stable = 0;
     } calib;
-    int calibOutput = 0;
     std::array<juce::String, kMaxCh> loadedFir; // path currently in each convolution
 
     struct Sweep

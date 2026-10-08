@@ -18,8 +18,15 @@ struct Harness
     Harness()
     {
         engine.prepareForTest(48000.0, kBlock, kIn, kOut);
-        state.resizeIO(kIn, kOut);
-        state.inputs[1].role = "mic";
+        // Console on physical in 0, measurement mic on physical in 1; outputs patched 1:1.
+        state.sources = { { "Console", "program", 0 }, { "Mic", "mic", 1 } };
+        for (int o = 0; o < kOut; ++o) {
+            vt::OutputConfig c;
+            c.name = "Out " + juce::String(o + 1);
+            c.channel = o;
+            c.mix = { 0.0f, 0.0f };
+            state.outputs.push_back(c);
+        }
     }
     void apply() { engine.setParams(vt::toParams(state)); }
 
@@ -105,7 +112,7 @@ TEST_CASE("Internal loopback: analyzer measures the output-to-mic loop delay")
     h.state.gen.on = true;
     h.state.gen.levelDb = -20.0f;
     h.state.gen.targets = { 0 };
-    h.state.measure.micInput = 1;     // input 1 = output 0 delayed by one block
+    h.state.measure.micSource = 1;    // input 1 = output 0 delayed by one block
     h.state.outputs[0].delayMs = 1.0f; // + 48 samples of processing delay
     h.apply();
     h.engine.unmuteAfterFault();
@@ -114,4 +121,21 @@ TEST_CASE("Internal loopback: analyzer measures the output-to-mic loop delay")
     auto r = h.engine.analyzer().result();
     REQUIRE(!r.magDb.empty());
     CHECK_THAT(r.magDb[100], WithinAbs(0.0, 0.5));
+}
+
+TEST_CASE("Outputs write to their patched physical channel; the rest stays silent")
+{
+    Harness h;
+    h.state.outputs.resize(2);
+    h.state.outputs[0].channel = 3;   // logical output 0 → physical 3
+    h.state.outputs[0].mix[0] = 1.0f;
+    h.state.outputs[1].channel = -1;  // unassigned: processed, goes nowhere
+    h.state.outputs[1].mix[0] = 1.0f;
+    h.apply();
+    h.engine.unmuteAfterFault();
+    h.run(100, 0.5f);
+    CHECK_THAT(h.out[3].back(), WithinAbs(0.5, 1e-4));
+    CHECK(h.out[0].back() == 0.0f);
+    CHECK(h.out[1].back() == 0.0f);
+    CHECK(h.out[2].back() == 0.0f);
 }
