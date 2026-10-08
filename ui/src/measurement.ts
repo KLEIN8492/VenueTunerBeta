@@ -112,10 +112,12 @@ function renderControls(s: SystemState): void {
   $('genTargets').innerHTML = s.outputs.map((o, i) =>
     `<button data-t="${i}" class="${s.gen.targets.includes(i) ? 'on' : ''}" title="${esc(o.name)}">${i + 1}</button>`).join('');
 
-  const mics = s.inputs.map((inp, i) => opt(i, `${i + 1} · ${inp.name} (${inp.role})`, s.measure.micInput === i));
-  ($('mic') as HTMLSelectElement).innerHTML = opt(-1, '— none —', s.measure.micInput < 0) + mics.join('');
+  // Measurement mics first; any input can be measured (e.g. a console return).
+  const order = s.sources.map((src, i) => ({ src, i })).sort((a, b) => Number(b.src.type === 'mic') - Number(a.src.type === 'mic'));
+  ($('mic') as HTMLSelectElement).innerHTML = opt(-1, s.sources.some((x) => x.type === 'mic') ? '— none —' : '— add a mic in Settings › Inputs —', s.measure.micSource < 0) +
+    order.map(({ src, i }) => opt(i, `${src.name}${src.type === 'mic' ? '' : ` (${src.type})`}`, s.measure.micSource === i)).join('');
   ($('ref') as HTMLSelectElement).innerHTML = opt('gen', 'Internal loopback (generator)', s.measure.ref === 'generator') +
-    s.inputs.map((inp, i) => opt(i, `Input ${i + 1} · ${inp.name}`, s.measure.ref === 'input' && s.measure.refInput === i)).join('');
+    s.sources.map((src, i) => opt(i, src.name, s.measure.ref === 'source' && s.measure.refSource === i)).join('');
   ($('avg') as HTMLSelectElement).innerHTML = [1, 2, 4, 8, 16, 32, 64, 128].map((n) => opt(n, `${n} frames`, s.measure.averaging === n)).join('');
   ($('smooth') as HTMLSelectElement).innerHTML = [[0, 'none'], [48, '1/48 oct'], [24, '1/24 oct'], [12, '1/12 oct'], [6, '1/6 oct'], [3, '1/3 oct']]
     .map(([n, l]) => opt(n, String(l), s.measure.smoothing === n)).join('');
@@ -141,16 +143,12 @@ $('genTargets').onclick = (e) => {
   report(engine.patch('gen/targets', cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
 };
 $('mic').onchange = (e) => {
-  const v = Number((e.target as HTMLSelectElement).value);
-  const patches: { path: string; value: unknown }[] = [{ path: 'measure/micInput', value: v }];
-  // A mic must never feed the PA: mark it as such.
-  if (v >= 0) patches.push({ path: `inputs/${v}/role`, value: 'mic' });
-  report(engine.patchMany(patches));
+  report(engine.patch('measure/micSource', Number((e.target as HTMLSelectElement).value)));
 };
 $('ref').onchange = (e) => {
   const v = (e.target as HTMLSelectElement).value;
   report(v === 'gen' ? engine.patch('measure/ref', 'generator')
-    : engine.patchMany([{ path: 'measure/ref', value: 'input' }, { path: 'measure/refInput', value: Number(v) }]));
+    : engine.patchMany([{ path: 'measure/refSource', value: Number(v) }, { path: 'measure/ref', value: 'source' }]));
 };
 $('avg').onchange = (e) => report(engine.patch('measure/averaging', Number((e.target as HTMLSelectElement).value)));
 $('smooth').onchange = (e) => report(engine.patch('measure/smoothing', Number((e.target as HTMLSelectElement).value)));

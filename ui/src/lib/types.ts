@@ -7,8 +7,12 @@ export interface ApBand { on: boolean; order: 1 | 2; freq: number; q: number }
 export interface XoConfig { type: XoType; freq: number }
 export interface FirConfig { on: boolean; path: string; taps: number; latencySamples: number }
 
+export type SourceType = 'program' | 'mic' | 'loopback';
+export interface SourceConfig { name: string; type: SourceType; channel: number }
+
 export interface OutputConfig {
   name: string; type: string; colour: string;
+  channel: number; // physical output, -1 = unassigned
   gainDb: number; polarityInvert: boolean; delayMs: number; mute: boolean;
   limiterOn: boolean; limThreshDb: number; limAttackMs: number; limReleaseMs: number;
   mix: number[];
@@ -17,10 +21,10 @@ export interface OutputConfig {
 
 export interface SystemState {
   device: { inputDevice: string; outputDevice: string; sampleRate: number; bufferSize: number };
-  inputs: { name: string; role: 'console' | 'mic' | 'loopback' | 'none' }[];
+  sources: SourceConfig[];
   outputs: OutputConfig[];
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
-  measure: { micInput: number; ref: 'generator' | 'input'; refInput: number; averaging: number; smoothing: number; multiWindow: boolean };
+  measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean };
   cal: { ioLatency: Record<string, number>; micCalPath: string };
 }
 

@@ -24,20 +24,20 @@
 - Migration in `fromVar` when `inputs` exists and `sources` doesn't.
 - Validation: duplicate output channels rejected; mix length = sources length.
 - `toParams`: physical gain matrix from program sources; output channel; mic/ref physical channels from sources.
-- [ ] Tests: migration of an M2 state (roles, mixes, micInput); toParams excludes mic sources; duplicate channel rejected; defaults for fresh state.
+- [x] Tests: migration of an M2 state (roles, mixes, micInput); toParams excludes mic sources; duplicate channel rejected; defaults for fresh state.
 
 ### Task 2: Engine routing + channel names + latency breakdown
 - `OutputParams::channel`; `processBlock` writes each logical output to its physical channel, silence elsewhere.
 - `AudioEngine::channelNames()` (driver names) and `latencyBreakdown()` (macOS CoreAudio: device latency, safety offset, stream latency, buffer per direction).
-- [ ] Tests: output 0 on channel 3 → audio on physical 3 only; unassigned output silent; generator targets logical outputs.
+- [x] Tests: output 0 on channel 3 → audio on physical 3 only; unassigned output silent; generator targets logical outputs.
 
 ### Task 3: Routing commands + snapshots with patch
 - `routing.addSource {type}`, `routing.removeSource {index}`, `routing.addOutput {preset: single|stereo|sub}`, `routing.removeOutput {index}`, `routing.duplicateOutput {index}`, `routing.moveOutput {index, to}`; `device.channels`; `device.latency`.
 - Snapshots: save `{version 2, device, sources, outputs}`; `snapshot.recall {name, remap?}` → `needsRemap` result when devices differ.
-- [ ] Tests: remove source drops its mix column and fixes mic/ref indices; stereo preset; recall on the same device applies; on another device returns needsRemap with the prefill; recall with remap applies channels.
+- [x] Tests: remove source drops its mix column and fixes mic/ref indices; stereo preset; recall on the same device applies; on another device returns needsRemap with the prefill; recall with remap applies channels.
 
 ### Task 4: Patch page (Settings) + updates elsewhere
 - Settings gets tabs: Audio · Patch · Calibration. Patch: sources table (name, type, input channel with driver names, meter), outputs table (name, type, colour, output channel, ↑↓, duplicate, delete), routing grid (program sources × outputs, dB), presets.
 - Audio tab: latency breakdown table.
 - Live: strips show "→ <channel name>"; Measurement: mic/ref from sources; remap dialog on snapshot recall (Live window).
-- [ ] Build passes; BlackHole end-to-end: add sources/outputs, patch output to channel 5, measure through it, snapshot recall with remap.
+- [x] Build passes; BlackHole end-to-end: add sources/outputs, patch output to channel 5, measure through it, snapshot recall with remap.

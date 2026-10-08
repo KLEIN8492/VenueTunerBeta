@@ -33,6 +33,11 @@
     .eqt select { padding: 1px 2px; }
     tr.sel td { background: #3a3220; }
     .strip .name { cursor: pointer; }
+    .strip .patch { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .strip .patch.none { color: var(--warn); }
+    .modal { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 10; }
+    .modal > div { background: var(--panel); border: 1px solid var(--line); padding: 12px 16px; max-height: 85vh; overflow: auto; min-width: 520px; }
+    .modal td select { max-width: 240px; }
   </style>
 </head>
 <body>
@@ -48,6 +53,7 @@
       <div class="snap" id="snap"></div>
     </div>
     <div id="editor"></div>
+    <div id="modal"></div>
   </div>
   <script type="module" src="./src/live.ts"></script>
 </body>

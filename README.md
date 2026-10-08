@@ -31,9 +31,13 @@ npm test          # engine (Catch2) + UI (Vitest) tests
 | ⌘, | Settings (audio device, input roles, routing matrix, calibration) |
 | G / C / R | (Measurement) generator on/off · capture trace · reset averaging |
 
-1. **Settings (⌘,)**: choose the interface, sample rate and buffer. Mark the measurement mic
-   input as `mic` (mics are never routed to outputs). Route console inputs to outputs in the
-   matrix (values in dB).
+1. **Settings (⌘,)**, one page per job:
+   - **Audio**: interface, sample rate, buffer, and where the latency comes from (driver vs VenueTuner).
+   - **Inputs**: create only the inputs you use, name them, pick their interface channel.
+     Type `program` = sound to process, `measurement mic` = never sent to speakers, `loopback` = cabled reference.
+   - **Outputs**: create one output per speaker feed, pick its interface channel, and choose which
+     inputs feed it ("fed by", in dB). Presets: stereo pair, sub (L+R with LR24 100 Hz).
+   - **Calibration**: interface latency (cable loopback) and the mic calibration file.
 2. **Live (⌘2)**: outputs start **muted** after launch, a device change or a crash.
    Check levels, then press *Unmute outputs*. *MUTE ALL* is always at the top.
 3. **Measurement (⌘1)**: pick the mic, keep reference on *Internal loopback*, choose
@@ -42,6 +46,9 @@ npm test          # engine (Catch2) + UI (Vitest) tests
    the other speaker and press *Align to ref* on its output.
 4. **Interface latency**: the driver-reported value is used automatically. For precision,
    cable an output to an input and run *Calibrate* in Settings once per device/rate/buffer.
+
+Snapshots store the patch (inputs, outputs, channels), routing and all processing. Recalling one
+made on another interface asks you to remap each input/output to the current channels.
 
 Data (autosave, snapshots) lives in `~/Library/Application Support/VenueTuner`.
 

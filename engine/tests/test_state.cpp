@@ -142,13 +142,16 @@ TEST_CASE("Filter config round-trips and validates")
 TEST_CASE("Pre-patch state migrates to sources and patched outputs")
 {
     auto v = juce::JSON::parse(R"({
-        "inputs":[{"name":"Mic","role":"mic"},{"name":"Unused","role":"none"},{"name":"Desk L","role":"console"},{"name":"Desk R","role":"console"}],
-        "outputs":[{"name":"Out 1","mix":[0,0,1,0]},{"name":"Out 2","mix":[0,0,0,1]}],
+        "inputs":[{"name":"Mic","role":"mic"},{"name":"Unused","role":"none"},{"name":"Desk L","role":"console"},{"name":"Desk R","role":"console"},{"name":"In 5","role":"console"}],
+        "outputs":[{"name":"Out 1","mix":[0,0,1,0,0]},{"name":"Out 2","mix":[0,0,0,1,0]},{"name":"Out 3","mix":[0,0,0,0,0]},{"name":"Fill","mix":[0,0,0,0,0]}],
         "measure":{"micInput":0,"ref":"generator"}})");
     vt::SystemState s;
     juce::String err;
     REQUIRE(vt::fromVar(v, s, err));
-    REQUIRE(s.sources.size() == 3); // "none" dropped
+    REQUIRE(s.sources.size() == 3); // "none" and the untouched, unrouted "In 5" dropped
+    REQUIRE(s.outputs.size() == 3);  // untouched "Out 3" dropped, renamed "Fill" kept
+    CHECK(s.outputs[2].name == "Fill");
+    CHECK(s.outputs[2].channel == 3);
     CHECK(s.sources[0].type == "mic");
     CHECK(s.sources[1].name == "Desk L");
     CHECK(s.sources[1].type == "program");

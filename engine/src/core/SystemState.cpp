@@ -249,18 +249,34 @@ void migrateLegacy(const juce::var& v, SystemState& s)
     if (const auto* a = v["inputs"].getArray())
         for (int i = 0; i < a->size(); ++i) {
             const auto role = (*a)[i]["role"].toString();
-            if (role == "none" || i >= kMaxCh) { map.push_back(-1); continue; }
+            // Keep inputs that were in use: routed somewhere, renamed, or a mic/loopback.
+            bool routed = false;
+            if (const auto* outs = v["outputs"].getArray())
+                for (auto& o : *outs)
+                    if (const auto* m = o["mix"].getArray(); m && i < m->size() && double((*m)[i]) > 0) routed = true;
+            const bool used = role == "mic" || role == "loopback" || routed || (*a)[i]["name"].toString() != "In " + juce::String(i + 1);
+            if (role == "none" || i >= kMaxCh || !used) { map.push_back(-1); continue; }
             map.push_back(int(s.sources.size()));
             s.sources.push_back({ (*a)[i]["name"].toString(), role == "console" ? "program" : role, i });
         }
+    std::vector<OutputConfig> kept;
     for (size_t o = 0; o < s.outputs.size(); ++o) {
-        auto& out = s.outputs[o];
+        auto out = s.outputs[o];
         out.channel = int(o);
         std::vector<float> mix(s.sources.size(), 0.0f);
+        bool routed = false;
         for (size_t i = 0; i < out.mix.size() && i < map.size(); ++i)
-            if (map[i] >= 0) mix[size_t(map[i])] = out.mix[i];
+            if (map[i] >= 0) { mix[size_t(map[i])] = out.mix[i]; routed |= out.mix[i] > 0; }
         out.mix = mix;
+        // Keep only outputs that were actually in use: the old layout had one per channel.
+        const OutputConfig untouched;
+        const bool used = routed || out.name != "Out " + juce::String(int(o) + 1) || !out.peq.empty() || !out.ap.empty()
+                       || out.hp.type != "off" || out.lp.type != "off" || out.fir.on || out.gainDb != untouched.gainDb
+                       || out.delayMs != untouched.delayMs || out.polarityInvert;
+        if (used) kept.push_back(out);
     }
+    s.outputs = kept;
+    s.gen.targets.clear();
     const auto& m = v["measure"];
     auto mapped = [&](const juce::var& x) { const int i = x.isVoid() ? -1 : int(x); return i >= 0 && i < int(map.size()) ? map[size_t(i)] : -1; };
     s.measure.micSource = mapped(m["micInput"]);

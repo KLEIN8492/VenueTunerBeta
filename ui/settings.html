@@ -5,50 +5,83 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VenueTuner · Settings</title>
   <style>
-    .page { flex: 1; overflow: auto; padding: 4px 14px 20px; }
-    section { margin-bottom: 14px; max-width: 980px; }
-    .matrix input { width: 54px; }
-    .matrix td.on input { color: var(--accent); }
-    .matrix th.vert { writing-mode: vertical-rl; transform: rotate(180deg); height: 90px; }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); background: #0f1011; }
+    .tabs button { border: 0; border-right: 1px solid var(--line); padding: 8px 20px; background: none; }
+    .tabs button.on { background: var(--panel); color: var(--accent); }
+    .page { flex: 1; overflow: auto; padding: 6px 16px 24px; }
+    section { margin-bottom: 18px; max-width: 1100px; }
+    .help { color: var(--dim); max-width: 760px; margin: 2px 0 10px; }
+    .meter { width: 70px; height: 8px; background: #0c0d0e; border: 1px solid var(--line); position: relative; }
+    .meter > div { position: absolute; inset: 0 auto 0 0; background: var(--ok); }
+    .swatch-in { width: 26px; height: 18px; padding: 0; border: 0; }
+    td { vertical-align: middle; }
+    td input[type=text] { width: 140px; }
+    td select { max-width: 210px; }
+    .num { text-align: right; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); background: #13332f; padding: 1px 4px; margin: 1px 4px 1px 0; }
+    .chip input { width: 50px; }
+    .chip button { padding: 0 4px; }
+    .fed { min-width: 360px; }
+    .add-in { color: var(--dim); }
   </style>
 </head>
 <body>
   <div class="app">
     <div class="statusbar" id="status"></div>
+    <div class="tabs" id="tabs">
+      <button data-tab="audio">Audio</button><button data-tab="inputs">Inputs</button><button data-tab="outputs">Outputs</button><button data-tab="cal">Calibration</button>
+    </div>
     <div class="page">
-      <section>
-        <h2>Audio device</h2>
-        <div class="row"><label>Output</label><select id="outDev" class="grow"></select></div>
-        <div class="row"><label>Input</label><select id="inDev" class="grow"></select></div>
-        <div class="row"><label>Rate</label><select id="rate"></select><label>Buffer</label><select id="buf"></select>
-          <button id="apply">Apply</button><button id="rescan">Rescan</button></div>
-        <div class="dim">Changing device mutes all outputs until you unmute them in the Live window.</div>
-      </section>
-      <section>
-        <h2>Inputs</h2>
-        <div class="scroll"><table id="inputs"></table></div>
-        <div class="dim">console = may feed outputs · mic = measurement only (never routed to the PA) · loopback = physical reference</div>
-      </section>
-      <section>
-        <h2>Outputs</h2>
-        <div class="scroll"><table id="outputs"></table></div>
-      </section>
-      <section>
-        <h2>Routing (dB, empty = off)</h2>
-        <div class="scroll"><table id="matrix" class="matrix"></table></div>
-      </section>
-      <section>
-        <h2>Interface latency</h2>
-        <div id="latInfo" class="row"></div>
-        <div class="row"><label>Cable from</label><select id="calOut"></select><label>to input</label><select id="calIn"></select>
-          <button id="calRun">Calibrate</button><button id="calClear">Use driver value</button></div>
-        <div id="calResult" class="dim">The internal loopback compensates the latency the driver reports. For best precision, connect an output to an input with a cable and calibrate once per device / rate / buffer.</div>
-      </section>
-      <section>
-        <h2>Measurement microphone</h2>
-        <div class="row"><input id="micPath" type="text" class="grow" placeholder="/path/to/mic.cal"/><button id="micBrowse">Browse…</button><button id="micLoad">Load</button><button id="micClear">Clear</button>
-          <input id="micFile" type="file" accept=".cal,.txt,.frd" hidden/></div>
-      </section>
+      <div data-page="audio">
+        <section>
+          <h2>Audio interface</h2>
+          <div class="row"><label>Output</label><select id="outDev" class="grow"></select></div>
+          <div class="row"><label>Input</label><select id="inDev" class="grow"></select></div>
+          <div class="row"><label>Rate</label><select id="rate"></select><label>Buffer</label><select id="buf"></select>
+            <button id="apply">Apply</button><button id="rescan">Rescan</button></div>
+          <div class="help">Changing the interface mutes all outputs until you unmute them in the Live window.</div>
+        </section>
+        <section>
+          <h2>Where the latency comes from</h2>
+          <table id="latTable"></table>
+          <div id="latNote" class="help"></div>
+        </section>
+      </div>
+
+      <div data-page="inputs" hidden>
+        <section>
+          <h2>Inputs</h2>
+          <div class="help">Create only the inputs you use, name them, and pick the interface channel each one comes in on.
+            <b>Program</b> = sound to process (console…). <b>Mic</b> = measurement mic, never sent to the speakers. <b>Loopback</b> = cabled reference.</div>
+          <table id="inputs"></table>
+          <div class="row"><button data-add-src="program">+ Input</button><button data-add-src="mic">+ Measurement mic</button><button data-add-src="loopback">+ Loopback</button></div>
+        </section>
+      </div>
+
+      <div data-page="outputs" hidden>
+        <section>
+          <h2>Outputs</h2>
+          <div class="help">Create one output per speaker feed, pick the interface channel it goes out on, and choose which inputs feed it.
+            Each output gets its own processing in the Live window.</div>
+          <table id="outputs"></table>
+          <div class="row"><button data-add-out="single">+ Output</button><button data-add-out="stereo">+ Stereo pair (L/R)</button><button data-add-out="sub">+ Sub (L+R, low-pass 100 Hz)</button></div>
+        </section>
+      </div>
+
+      <div data-page="cal" hidden>
+        <section>
+          <h2>Interface latency</h2>
+          <div id="latInfo" class="row"></div>
+          <div class="row"><label>Cable from</label><select id="calOut"></select><label>to input</label><select id="calIn"></select>
+            <button id="calRun">Calibrate</button><button id="calClear">Use driver value</button></div>
+          <div id="calResult" class="help">The internal loopback compensates the latency the driver reports. For best precision, connect an output to an input with a cable and calibrate once per interface / rate / buffer.</div>
+        </section>
+        <section>
+          <h2>Measurement microphone calibration file</h2>
+          <div class="row"><input id="micPath" type="text" class="grow" placeholder="/path/to/mic.cal"/><button id="micBrowse">Browse…</button><button id="micLoad">Load</button><button id="micClear">Clear</button>
+            <input id="micFile" type="file" accept=".cal,.txt,.frd" hidden/></div>
+        </section>
+      </div>
     </div>
   </div>
   <script type="module" src="./src/settings.ts"></script>

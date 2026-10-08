@@ -3,6 +3,7 @@ import { connectFromLocation } from './lib/engine';
 import { mountStatusBar, esc } from './lib/statusbar';
 import { linToDb, samplesToMs } from './lib/scale';
 import { EqEditor } from './lib/eqeditor';
+import { Channels } from './lib/channels';
 import type { OutputConfig, Status, SystemState } from './lib/types';
 
 const engine = connectFromLocation();
@@ -10,6 +11,7 @@ mountStatusBar(document.getElementById('status')!, engine);
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const report = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));
 
+const channels = new Channels(engine);
 const selected = new Set<number>();
 let builtFor = '';
 const editor = new EqEditor($('editor'), engine, () => [...selected]);
@@ -22,6 +24,7 @@ function stripHtml(o: OutputConfig, i: number): string {
   return `
   <div class="strip" data-i="${i}">
     <div class="name" data-sel="${i}" style="border-color:${esc(o.colour)}">${i + 1} · <span data-f="name"></span></div>
+    <div class="patch" data-f="patch"></div>
     <div class="meters">
       <div class="scale"><span>0</span><span>-12</span><span>-24</span><span>-36</span><span>-48</span><span>-60</span></div>
       <div class="meter" title="output level"><div class="fill" data-m="out"></div></div>
@@ -42,7 +45,7 @@ function renderStrips(s: SystemState): void {
   const shape = s.outputs.map((o) => o.colour).join(',');
   const root = $('strips');
   if (shape !== builtFor) {
-    root.innerHTML = s.outputs.map(stripHtml).join('') || '<div class="dim" style="padding:10px">No outputs: choose an audio device in Settings (⌘,)</div>';
+    root.innerHTML = s.outputs.map(stripHtml).join('') || '<div class="dim" style="padding:10px">No outputs yet: create them in Settings › Outputs (⌘,)</div>';
     builtFor = shape;
   }
   s.outputs.forEach((o, i) => {
@@ -50,6 +53,9 @@ function renderStrips(s: SystemState): void {
     if (!el) return;
     el.classList.toggle('sel', selected.has(i));
     el.querySelector('[data-f="name"]')!.textContent = o.name;
+    const patch = el.querySelector<HTMLElement>('[data-f="patch"]')!;
+    patch.textContent = `→ ${channels.outLabel(o.channel)}`;
+    patch.classList.toggle('none', o.channel < 0);
     el.querySelector('[data-act="mute"]')!.classList.toggle('on', o.mute);
     el.querySelector('[data-act="pol"]')!.classList.toggle('on', o.polarityInvert);
     el.querySelector('[data-act="lim"]')!.classList.toggle('on', o.limiterOn);
@@ -149,7 +155,7 @@ $('snap').innerHTML = `
   <div class="row"><label>A/B</label><select id="snapA" class="grow"></select><select id="snapB" class="grow"></select></div>
   <div class="row"><button id="snapAB" class="grow">Toggle A ⇄ B</button></div>
   <div class="row"><button id="snapImport" class="grow">Import…</button><input id="snapFile" type="file" accept=".json" hidden/></div>
-  <div class="dim" style="margin-top:8px">Snapshots store outputs: names, routing, gain, polarity, delay, mute and limiter. Recall crossfades (gains ramp, delays crossfade).</div>
+  <div class="dim" style="margin-top:8px">Snapshots store the patch (inputs, outputs, channels), routing and all processing. Recall crossfades gains and delays. On another interface you are asked to remap the channels.</div>
 `;
 let names: string[] = [];
 let lastRecalled = '';
@@ -166,10 +172,41 @@ async function refreshSnapshots(): Promise<void> {
   }
 }
 
+interface RemapItem { name: string; type?: string; was: number; channel: number }
+interface RecallReply { needsRemap?: boolean; fromInput?: string; fromOutput?: string; sources?: RemapItem[]; outputs?: RemapItem[] }
+
 async function recall(name: string): Promise<void> {
-  await engine.request('snapshot.recall', { name });
+  const r = await engine.request<RecallReply>('snapshot.recall', { name });
+  if (r?.needsRemap) { showRemap(name, r); return; }
   lastRecalled = name;
   await refreshSnapshots();
+}
+
+// The snapshot was made on another interface: choose where each input/output goes now.
+function showRemap(name: string, r: RecallReply): void {
+  const chan = (names: string[], cur: number) =>
+    `<option value="-1"${cur < 0 ? ' selected' : ''}>— not connected —</option>` +
+    names.map((n, i) => `<option value="${i}"${i === cur ? ' selected' : ''}>${i + 1} · ${esc(n)}</option>`).join('');
+  const rows = (items: RemapItem[], names: string[], kind: string) => items.map((x, i) =>
+    `<tr><td>${esc(x.name)}</td><td class="dim">was ${x.was < 0 ? '—' : x.was + 1}</td><td><select data-${kind}="${i}">${chan(names, x.channel)}</select></td></tr>`).join('');
+  $('modal').innerHTML = `<div class="modal"><div>
+    <h2>Snapshot "${esc(name)}" was made on another interface</h2>
+    <div class="dim">From: ${esc(r.fromOutput ?? '?')}${r.fromInput && r.fromInput !== r.fromOutput ? ' / ' + esc(r.fromInput) : ''}. Choose the channels on the current interface (prefilled by name, then by number).</div>
+    <h2>Inputs</h2><table>${rows(r.sources ?? [], channels.inputs, 'rs')}</table>
+    <h2>Outputs</h2><table>${rows(r.outputs ?? [], channels.outputs, 'ro')}</table>
+    <div class="row" style="margin-top:10px"><button id="remapApply" class="on">Recall with this patch</button><button id="remapCancel">Cancel</button></div>
+  </div></div>`;
+  $('remapCancel').onclick = () => { $('modal').innerHTML = ''; };
+  $('remapApply').onclick = () => {
+    const pick = (kind: string) => [...document.querySelectorAll<HTMLSelectElement>(`[data-${kind}]`)].map((s) => Number(s.value));
+    const outs = pick('ro').filter((c) => c >= 0);
+    if (new Set(outs).size !== outs.length) return alert('Two outputs are on the same interface channel.');
+    report(engine.request('snapshot.recall', { name, remap: { sources: pick('rs'), outputs: pick('ro') } }).then(async () => {
+      $('modal').innerHTML = '';
+      lastRecalled = name;
+      await refreshSnapshots();
+    }));
+  };
 }
 
 $('snapSave').onclick = () => {
@@ -205,5 +242,6 @@ $('snapFile').onchange = async (e) => {
 
 // ---------------------------------------------------------------- wiring
 engine.on('state', renderStrips);
+channels.onChange(() => engine.state && renderStrips(engine.state));
 engine.on('status', (st) => { renderMeters(st); renderBanner(st); });
 engine.on('open', () => void refreshSnapshots().catch(() => undefined));
