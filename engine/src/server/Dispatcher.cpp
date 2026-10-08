@@ -236,6 +236,8 @@ juce::var Dispatcher::openDevice(const DeviceConfig& cfg, juce::String& err)
     const auto st = engine.status();
     if (err.isEmpty()) {
         state.device = cfg;
+        state.device.inputDevice = st.inputDevice;   // remember what was actually opened
+        state.device.outputDevice = st.outputDevice; // (defaults resolved on a fresh install)
         state.device.sampleRate = st.sampleRate;
         state.device.bufferSize = st.bufferSize;
         state.ensureDefaults(st.numIn, st.numOut);

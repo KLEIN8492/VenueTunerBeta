@@ -47,8 +47,19 @@ juce::String AudioEngine::openDevice(const DeviceConfig& cfg)
     deviceWanted = true;
     if (auto err = ensureInitialised(); err.isNotEmpty()) return lastError = err;
     auto setup = dm.getAudioDeviceSetup();
+    // Empty names (first launch, fresh install) mean "the system's default devices", not none.
     setup.inputDeviceName = cfg.inputDevice;
     setup.outputDeviceName = cfg.outputDevice;
+    if (auto* type = dm.getCurrentDeviceTypeObject()) {
+        type->scanForDevices();
+        auto defaultName = [type](bool input) {
+            const auto names = type->getDeviceNames(input);
+            const int i = type->getDefaultDeviceIndex(input);
+            return names.isEmpty() ? juce::String() : names[juce::jlimit(0, names.size() - 1, i)];
+        };
+        if (setup.outputDeviceName.isEmpty()) setup.outputDeviceName = defaultName(false);
+        if (setup.inputDeviceName.isEmpty()) setup.inputDeviceName = defaultName(true);
+    }
     setup.sampleRate = cfg.sampleRate;
     setup.bufferSize = cfg.bufferSize;
     setup.useDefaultInputChannels = false;
