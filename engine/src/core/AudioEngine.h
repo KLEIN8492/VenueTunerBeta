@@ -25,6 +25,7 @@ public:
         int bufferSize = 0, numIn = 0, numOut = 0;
         double cpu = 0;
         int xruns = 0;
+        int64_t callbacks = 0; // audio callbacks since start (health check)
         int driverLatencySamples = 0; // input + output as reported by the driver
         bool running = false, faultMuted = true, muteAll = false;
         juce::String lastError;
@@ -59,6 +60,7 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void timerCallback() override; // reconnect watchdog
     void prepare(double sr, int block);
+    juce::String ensureInitialised();
 
     struct AnalysisThread : juce::Thread
     {
@@ -69,7 +71,7 @@ private:
 
     juce::AudioDeviceManager dm;
     DeviceConfig wanted;
-    bool deviceWanted = false;
+    bool deviceWanted = false, initialised = false;
     juce::String lastError;
 
     TripleBuffer<Params> params;
@@ -79,6 +81,7 @@ private:
     std::vector<float> genBuf, mixBuf, zeroBuf;
     std::atomic<bool> muteAll { false }, faultMuted { true };
     std::atomic<int> xruns { 0 };
+    std::atomic<int64_t> callbackCount { 0 };
     std::array<std::atomic<float>, kMaxCh> inPeak {};
     Analyzer analyzerImpl;
     AnalysisThread analysisThread { analyzerImpl };

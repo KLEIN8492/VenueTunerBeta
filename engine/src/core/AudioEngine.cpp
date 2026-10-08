@@ -17,15 +17,21 @@ AudioEngine::~AudioEngine()
     analysisThread.stopThread(1000);
 }
 
+juce::String AudioEngine::ensureInitialised()
+{
+    if (initialised) return {};
+    if (auto err = dm.initialise(kMaxCh, kMaxCh, nullptr, false); err.isNotEmpty()) return err;
+    dm.addChangeListener(this);
+    dm.addAudioCallback(this);
+    initialised = true;
+    return {};
+}
+
 juce::String AudioEngine::openDevice(const DeviceConfig& cfg)
 {
     wanted = cfg;
     deviceWanted = true;
-    if (dm.getCurrentAudioDevice() == nullptr && dm.getAvailableDeviceTypes().isEmpty()) {
-        if (auto err = dm.initialise(kMaxCh, kMaxCh, nullptr, false); err.isNotEmpty()) return lastError = err;
-        dm.addChangeListener(this);
-        dm.addAudioCallback(this);
-    }
+    if (auto err = ensureInitialised(); err.isNotEmpty()) return lastError = err;
     auto setup = dm.getAudioDeviceSetup();
     setup.inputDeviceName = cfg.inputDevice;
     setup.outputDeviceName = cfg.outputDevice;
@@ -52,11 +58,7 @@ void AudioEngine::closeDevice()
 
 juce::var AudioEngine::listDevices()
 {
-    if (dm.getAvailableDeviceTypes().isEmpty()) {
-        dm.initialise(kMaxCh, kMaxCh, nullptr, false);
-        dm.addChangeListener(this);
-        dm.addAudioCallback(this);
-    }
+    ensureInitialised();
     auto root = juce::var(new juce::DynamicObject());
     juce::Array<juce::var> ins, outs, rates, buffers;
     if (auto* type = dm.getCurrentDeviceTypeObject()) {
@@ -91,6 +93,7 @@ AudioEngine::Status AudioEngine::status()
         s.xruns = dev->getXRunCount() + xruns.load();
     }
     s.cpu = dm.getCpuUsage();
+    s.callbacks = callbackCount.load(std::memory_order_relaxed);
     s.faultMuted = faultMuted.load();
     s.muteAll = muteAll.load();
     s.lastError = lastError;
@@ -153,6 +156,7 @@ void AudioEngine::timerCallback()
 void AudioEngine::audioDeviceIOCallbackWithContext(const float* const* in, int numIn, float* const* out,
                                                    int numOut, int n, const juce::AudioIODeviceCallbackContext&)
 {
+    callbackCount.fetch_add(1, std::memory_order_relaxed);
     processBlock(in, numIn, out, numOut, n);
 }
 
