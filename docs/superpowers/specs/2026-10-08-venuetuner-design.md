@@ -169,8 +169,11 @@ Input mix → Gain → Polarity → Delay → PEQ (16 bands) → Crossover HP/LP
 
 ### Reference
 
-- **Software loopback (default):** a copy of the generator signal, delayed by the
-  calibrated I/O latency. No physical input is consumed.
+- **Internal loopback (default):** the engine copies the generator signal inside the
+  software and uses it as the reference — no device, cable, or input channel needed.
+  The sound card's own I/O delay is compensated automatically using the latency the
+  driver reports (CoreAudio / ALSA); the optional cable calibration overrides it with a
+  measured value for best precision.
 - **Physical loopback (optional):** an input wired from an output.
 - **Console as reference:** dual-FFT on programme material (measure during a show).
 
@@ -189,8 +192,8 @@ Input mix → Gain → Polarity → Delay → PEQ (16 bands) → Crossover HP/LP
 
 ### Calibration
 
-- **I/O latency calibration:** loopback cable, click, measured once per device /
-  sample rate / buffer size, stored.
+- **I/O latency:** driver-reported by default; optional loopback-cable calibration
+  measured once per device / sample rate / buffer size and stored as an override.
 - **Mic calibration file:** standard `.cal` / `.txt` (frequency, dB offset).
 - **SPL calibration (optional):** 94 dB calibrator → absolute dB SPL.
 
