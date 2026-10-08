@@ -44,7 +44,14 @@ npm test          # engine (Catch2) + UI (Vitest) tests
    generator outputs, press G. The delay finder shows the arrival time (interface latency
    removed). To align: *Store as reference arrival* on the reference speaker, then measure
    the other speaker and press *Align to ref* on its output.
-4. **Interface latency**: the driver-reported value is used automatically. For precision,
+4. **Auto-tuning** (Measurement window, sidebar tabs):
+   - **Auto-EQ**: capture one or more mic positions of an output (generator on that output only),
+     pick a target (flat, tilt, house curve) and Compute. The yellow curve is the predicted result;
+     Apply replaces that output's PEQ with ordinary bands (cuts preferred, combined boost ≤ +3 dB,
+     narrow dips and low-coherence regions left alone). A "Before auto-EQ" snapshot is saved.
+   - **Align**: capture the top alone and the sub alone from the same position; Compute finds the
+     delay and polarity that sum best around the crossover (using phase). Apply sets them.
+5. **Interface latency**: the driver-reported value is used automatically. For precision,
    cable an output to an input and run *Calibrate* in Settings once per device/rate/buffer.
 
 Snapshots store the patch (inputs, outputs, channels), routing and all processing. Recalling one

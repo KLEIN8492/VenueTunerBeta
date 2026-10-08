@@ -5,6 +5,7 @@ import { mountStatusBar, esc } from './lib/statusbar';
 import { coherenceAlpha } from './lib/coherence';
 import { samplesToMs, SPEED_OF_SOUND } from './lib/scale';
 import type { SystemState, Trace } from './lib/types';
+import { mountAutoEq, mountXoAlign } from './lib/tunepanels';
 
 const engine = connectFromLocation();
 mountStatusBar(document.getElementById('status')!, engine);
@@ -29,12 +30,14 @@ const saveTraces = () => { try { localStorage.setItem('vt.traces', JSON.stringif
 
 let live: TfFrame | null = null;
 let referenceArrivalMs: number | null = null;
+let overlay: PlotTrace[] = []; // previews from the Auto-EQ / Align tabs
 
 function redraw(): void {
   const magT: PlotTrace[] = [], phT: PlotTrace[] = [], cohT: PlotTrace[] = [];
   for (const t of traces.filter((t) => t.visible)) {
-    magT.push({ x: t.freq, y: t.mag, color: t.color, label: t.name });
-    phT.push({ x: t.freq, y: t.phase, color: t.color, wrap: 180 });
+    const alpha = t.coh.map(coherenceAlpha); // same blanking as the live trace
+    magT.push({ x: t.freq, y: t.mag, color: t.color, alpha, label: t.name });
+    phT.push({ x: t.freq, y: t.phase, color: t.color, alpha, wrap: 180 });
     cohT.push({ x: t.freq, y: t.coh, color: t.color });
   }
   if (live && live.frames > 0) {
@@ -43,6 +46,7 @@ function redraw(): void {
     phT.push({ x: live.freq, y: live.phase, color: LIVE, width: 1.5, alpha, wrap: 180 });
     cohT.push({ x: live.freq, y: live.coh, color: LIVE });
   }
+  magT.push(...overlay);
   mag.traces = magT; phase.traces = phT; coh.traces = cohT;
   mag.draw(); phase.draw(); coh.draw();
 }
@@ -66,6 +70,8 @@ engine.on('ir', (f) => {
 // ---------------------------------------------------------------- side panel
 const side = $('side');
 side.innerHTML = `
+  <div class="sidetabs" id="sideTabs"><button data-st="measure" class="on">Measure</button><button data-st="autoeq">Auto-EQ</button><button data-st="align">Align</button></div>
+  <div data-sp="measure">
   <h2>Generator</h2>
   <div class="row"><button id="genOn" class="grow">Pink noise OFF</button></div>
   <div class="row"><label>Level</label><input id="genLevel" type="range" min="-60" max="-12" step="1" class="grow"/><span id="genLevelV" class="dim"></span></div>
@@ -88,18 +94,40 @@ side.innerHTML = `
   <div id="align" class="dim"></div>
   <div class="row"><select id="alignOut" class="grow"></select><button id="alignBtn">Align to ref</button></div>
 
-  <h2>Auto delay alignment</h2>
-  <div id="alignOuts" class="row" style="flex-wrap:wrap"></div>
-  <div class="row"><label>Align to</label><select id="alignRef" class="grow"></select></div>
-  <div class="row"><button id="alignStart" class="grow">Auto-align</button><button id="alignCancel">Cancel</button></div>
-  <div id="alignMsg" class="dim">Keep the mic still. Each output plays pink noise alone; delays are set so all arrive together. A before/after snapshot is saved.</div>
-
   <h2>Traces</h2>
   <div class="row"><input id="traceName" type="text" class="grow" placeholder="name"/><button id="capture">Capture [C]</button></div>
   <div id="traceList" class="list"></div>
   <div class="row"><button id="avgTraces" class="grow">Average visible</button><button id="exportCsv">Export CSV</button></div>
   <div class="dim" style="margin-top:8px">Wheel: move magnitude range · double-click: reset · G: generator</div>
+  </div>
+  <div data-sp="autoeq" hidden></div>
+  <div data-sp="align" hidden>
+    <div id="xoAlign"></div>
+    <h2>Auto delay alignment (arrival times)</h2>
+    <div id="alignOuts" class="row" style="flex-wrap:wrap"></div>
+    <div class="row"><label>Align to</label><select id="alignRef" class="grow"></select></div>
+    <div class="row"><button id="alignStart" class="grow">Auto-align</button><button id="alignCancel">Cancel</button></div>
+    <div id="alignMsg" class="dim">For tops, fills and delays. Keep the mic still. Each output plays pink noise alone; delays are set so all arrive together. A before/after snapshot is saved.</div>
+  </div>
 `;
+
+// Sidebar pages; leaving a tool page clears its preview from the plots.
+$('sideTabs').onclick = (e) => {
+  const t = (e.target as HTMLElement).dataset.st;
+  if (!t) return;
+  side.querySelectorAll<HTMLElement>('[data-sp]').forEach((p) => (p.hidden = p.dataset.sp !== t));
+  side.querySelectorAll<HTMLElement>('[data-st]').forEach((b) => b.classList.toggle('on', b.dataset.st === t));
+  overlay = [];
+  redraw();
+};
+const tuneCtx = {
+  engine,
+  traces: () => traces,
+  setOverlay: (t: PlotTrace[]) => { overlay = t; redraw(); },
+  report: (p: Promise<unknown>) => void p.catch((e: Error) => alert(e.message)),
+};
+mountAutoEq(side.querySelector<HTMLElement>('[data-sp=autoeq]')!, tuneCtx);
+mountXoAlign($('xoAlign'), tuneCtx);
 
 const opt = (v: string | number, label: string, sel: boolean) => `<option value="${v}"${sel ? ' selected' : ''}>${esc(label)}</option>`;
 const report = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));
@@ -239,6 +267,7 @@ function renderTraces(): void {
       <button data-del="${i}">×</button>
     </div>`).join('') || '<div class="item dim">no traces</div>';
   saveTraces();
+  window.dispatchEvent(new Event('vt-traces'));
   redraw();
 }
 $('traceList').onclick = (e) => {

@@ -78,12 +78,14 @@ export function autoEq(m: { freq: ArrayLike<number>; mag: ArrayLike<number>; coh
   const err = f.map((_, i) => (weight[i] ? smoothed[i] - offsetDb - tgt[i] : 0)); // + = too loud
 
   const eqCurve = (bands: PeqBand[]) => f.map((x) => bands.reduce((a, b) => a + bandDb(b, x, o.sr), 0));
-  // Cost: weighted error in range + a light penalty for EQ outside the range.
+  // Cost: weighted error in range + a light penalty for EQ outside the range. The boost cap
+  // applies to the *combined* curve (stacked bands must not add up past it).
+  const overBoost = (e: number[]) => Math.max(0, ...e) - maxBoost;
   const cost = (bands: PeqBand[]) => {
     const e = eqCurve(bands);
     let c = 0;
     for (let i = 0; i < n; i++) c += weight[i] ? Math.pow(err[i] + e[i], 2) : inRange[i] ? 0 : 0.1 * e[i] * e[i];
-    return c;
+    return overBoost(e) > 0.01 ? Infinity : c;
   };
 
   // Width (octaves) of a feature at index i where |residual| stays above half its value.
@@ -103,12 +105,13 @@ export function autoEq(m: { freq: ArrayLike<number>; mag: ArrayLike<number>; coh
     gainDb: Math.min(maxBoost, Math.max(maxCut, b.gainDb)),
     q: Math.min(8, Math.max(0.5, b.q)),
   });
-  while (bands.length < maxBands) {
+  const skip = new Array(n).fill(false); // dips we can't boost any further
+  for (let guard = 0; bands.length < maxBands && guard < 64; guard++) {
     const e = eqCurve(bands);
     const r = err.map((x, i) => (weight[i] ? x + e[i] : 0));
     let best = -1, bestScore = tol;
     for (let i = 0; i < n; i++) {
-      if (!weight[i]) continue;
+      if (!weight[i] || skip[i]) continue;
       if (r[i] > 0 && r[i] > bestScore) { best = i; bestScore = r[i]; }
       // Dips: only broad ones (≥ 1/3 octave at half depth), and they score lower than peaks.
       if (r[i] < 0 && -r[i] * 0.7 > bestScore && widthOct(r, i).oct >= 1 / 3) { best = i; bestScore = -r[i] * 0.7; }
@@ -116,7 +119,16 @@ export function autoEq(m: { freq: ArrayLike<number>; mag: ArrayLike<number>; coh
     if (best < 0) break;
     const wd = widthOct(r, best);
     const fc = Math.sqrt(wd.lo * wd.hi);
-    bands.push(clampBand({ on: true, type: 'bell', freq: fc, gainDb: -r[best], q: fc / Math.max(1, wd.hi - wd.lo) }));
+    // A boost may only use the headroom the existing bands leave at that frequency.
+    const room = maxBoost - Math.max(0, ...e);
+    const gain = r[best] > 0 ? -r[best] : Math.min(-r[best], room);
+    const band = clampBand({ on: true, type: 'bell', freq: fc, gainDb: gain, q: fc / Math.max(1, wd.hi - wd.lo) });
+    if ((gain > 0 && gain < 0.3) || overBoost(eqCurve([...bands, band])) > 0.01) {
+      // No boost headroom here: leave this dip alone and keep looking for other problems.
+      for (let i = 0; i < n; i++) if (f[i] >= wd.lo && f[i] <= wd.hi) skip[i] = true;
+      continue;
+    }
+    bands.push(band);
   }
 
   // 4. Refinement: coordinate descent on (freq, gain, Q) of every band.

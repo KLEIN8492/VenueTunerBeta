@@ -41,3 +41,7 @@ table { border-collapse: collapse; }
 td, th { border: 1px solid var(--line); padding: 2px 4px; text-align: left; font-weight: normal; }
 th { color: var(--dim); }
 .scroll { overflow: auto; }
+
+.sidetabs { display: flex; margin: 0 -10px 4px; border-bottom: 1px solid var(--line); }
+.sidetabs button { flex: 1; border: 0; border-right: 1px solid var(--line); background: none; padding: 6px 0; }
+.sidetabs button.on { color: var(--accent); background: #111213; }

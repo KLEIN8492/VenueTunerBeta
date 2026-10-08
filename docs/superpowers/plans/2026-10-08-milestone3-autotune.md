@@ -18,7 +18,7 @@
 
 ### Task 1: Stable output slots
 - `OutputConfig::id` (unique, persisted; assigned on create/migration); `OutputParams::slot`; engine processes `chains[slot]`, convolutions per slot; dispatcher keeps id→slot and FIR-loaded paths per slot.
-- [ ] Tests: removing output 0 keeps output 1's slot (and its FIR) unchanged; ids unique after duplicate; migration assigns ids.
+- [x] Tests: removing output 0 keeps output 1's slot (and its FIR) unchanged; ids unique after duplicate; migration assigns ids.
 
 ### Task 2: Channel labels
 - UI: bare-number driver names display as "In n" / "Out n".
@@ -26,12 +26,12 @@
 ### Task 3: Auto-EQ (TS)
 - `autoEq({ freq, mag, coh }, target, opts) → PeqBand[]` greedy placement + coordinate-descent refinement.
 - Targets: flat, tilt (dB/oct around 1 kHz), house (LF shelf + HF roll-off), user-tunable `houseCurve`.
-- [ ] Tests: synthetic response with known bells is corrected to ±1 dB; a −15 dB narrow notch gets ≤ +3 dB; boosts never exceed +3 dB; low-coherence region untouched; output-range respected.
+- [x] Tests: synthetic response with known bells is corrected to ±1 dB; a −15 dB narrow notch gets ≤ +3 dB; boosts never exceed +3 dB; low-coherence region untouched; output-range respected.
 
 ### Task 4: Sub↔top alignment (TS)
 - `alignPair(top, sub, fLo, fHi, sr) → { delayMs, invert, gainAtXoDb, curves }` search ±15 ms (0.02 ms steps) × polarity maximising summed energy in the crossover band.
-- [ ] Tests: synthetic LR24 pair with sub 2.5 ms late → suggests +2.5 ms on the top (or −2.5 on sub) within 0.05 ms; inverted sub → suggests polarity invert.
+- [x] Tests: synthetic LR24 pair with sub 2.5 ms late → suggests +2.5 ms on the top (or −2.5 on sub) within 0.05 ms; inverted sub → suggests polarity invert.
 
 ### Task 5: Measurement sidebar tabs + Auto-EQ / Align panels
 - Tabs Measure · Auto-EQ · Align. Auto-EQ: output, traces (average), target + params, range, bands, Compute (preview on plots), Apply. Align: top trace, sub trace, which output to adjust, Compute (curves), Apply.
-- [ ] Build; BlackHole end-to-end: synthetic room via PEQ "fault" on an output, measure, auto-EQ corrects it within ±1.5 dB.
+- [x] Build; BlackHole end-to-end: synthetic room via PEQ "fault" on an output, measure, auto-EQ corrects it within ±1.5 dB.
