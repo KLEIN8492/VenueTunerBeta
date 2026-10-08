@@ -1,0 +1,328 @@
+#include "core/SystemState.h"
+#include <cmath>
+
+namespace vt {
+
+void SystemState::resizeIO(int numIn, int numOut)
+{
+    numIn = std::clamp(numIn, 0, kMaxCh);
+    numOut = std::clamp(numOut, 0, kMaxCh);
+    for (int i = int(inputs.size()); i < numIn; ++i)
+        inputs.push_back({ "In " + juce::String(i + 1), "console" });
+    inputs.resize(size_t(numIn));
+    for (int o = int(outputs.size()); o < numOut; ++o) {
+        OutputConfig c;
+        c.name = "Out " + juce::String(o + 1);
+        outputs.push_back(c);
+    }
+    outputs.resize(size_t(numOut));
+    for (auto& o : outputs) o.mix.resize(size_t(numIn), 0.0f);
+}
+
+// ---------------------------------------------------------------- serialisation
+namespace {
+
+juce::var obj() { return juce::var(new juce::DynamicObject()); }
+
+template <class T>
+juce::var arr(const std::vector<T>& v)
+{
+    juce::Array<juce::var> a;
+    for (auto& x : v) a.add(x);
+    return a;
+}
+
+juce::var outputToVar(const OutputConfig& o)
+{
+    auto v = obj();
+    auto* d = v.getDynamicObject();
+    d->setProperty("name", o.name);
+    d->setProperty("type", o.type);
+    d->setProperty("colour", o.colour);
+    d->setProperty("gainDb", o.gainDb);
+    d->setProperty("polarityInvert", o.polarityInvert);
+    d->setProperty("delayMs", o.delayMs);
+    d->setProperty("mute", o.mute);
+    d->setProperty("limiterOn", o.limiterOn);
+    d->setProperty("limThreshDb", o.limThreshDb);
+    d->setProperty("limAttackMs", o.limAttackMs);
+    d->setProperty("limReleaseMs", o.limReleaseMs);
+    d->setProperty("mix", arr(o.mix));
+    return v;
+}
+
+// Strict field reader. Missing fields keep their default; present fields must have
+// the right type and range.
+struct Reader
+{
+    const juce::var& v;
+    juce::String ctx;
+    juce::String& err;
+
+    bool fail(const juce::String& key, const juce::String& why)
+    {
+        err = ctx + key + ": " + why;
+        return false;
+    }
+
+    bool num(const char* key, float& out, double lo, double hi)
+    {
+        double d = out;
+        if (!num(key, d, lo, hi)) return false;
+        out = float(d);
+        return true;
+    }
+    bool num(const char* key, double& out, double lo, double hi)
+    {
+        if (!v.hasProperty(key)) return true;
+        const auto& x = v[key];
+        if (!(x.isDouble() || x.isInt() || x.isInt64())) return fail(key, "expected a number");
+        const double d = double(x);
+        if (!std::isfinite(d) || d < lo || d > hi)
+            return fail(key, "out of range [" + juce::String(lo) + ", " + juce::String(hi) + "]");
+        out = d;
+        return true;
+    }
+    bool integer(const char* key, int& out, int lo, int hi)
+    {
+        double d = out;
+        if (!num(key, d, lo, hi)) return false;
+        if (d != std::floor(d)) return fail(key, "expected an integer");
+        out = int(d);
+        return true;
+    }
+    bool boolean(const char* key, bool& out)
+    {
+        if (!v.hasProperty(key)) return true;
+        if (!v[key].isBool()) return fail(key, "expected true/false");
+        out = bool(v[key]);
+        return true;
+    }
+    bool str(const char* key, juce::String& out, juce::StringArray allowed = {})
+    {
+        if (!v.hasProperty(key)) return true;
+        if (!v[key].isString()) return fail(key, "expected a string");
+        const auto s = v[key].toString();
+        if (!allowed.isEmpty() && !allowed.contains(s)) return fail(key, "must be one of " + allowed.joinIntoString(", "));
+        out = s;
+        return true;
+    }
+    template <class T>
+    bool list(const char* key, std::vector<T>& out, double lo, double hi)
+    {
+        if (!v.hasProperty(key)) return true;
+        const auto* a = v[key].getArray();
+        if (a == nullptr) return fail(key, "expected an array");
+        std::vector<T> tmp;
+        for (auto& x : *a) {
+            if (!(x.isDouble() || x.isInt() || x.isInt64())) return fail(key, "expected numbers");
+            const double d = double(x);
+            if (!std::isfinite(d) || d < lo || d > hi) return fail(key, "value out of range");
+            tmp.push_back(T(d));
+        }
+        out = std::move(tmp);
+        return true;
+    }
+};
+
+bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx, juce::String& err)
+{
+    if (!v.isObject()) { err = ctx + "expected an object"; return false; }
+    Reader r { v, ctx, err };
+    return r.str("name", o.name) && r.str("type", o.type) && r.str("colour", o.colour)
+        && r.num("gainDb", o.gainDb, -80, 12) && r.boolean("polarityInvert", o.polarityInvert)
+        && r.num("delayMs", o.delayMs, 0, 1000) && r.boolean("mute", o.mute)
+        && r.boolean("limiterOn", o.limiterOn) && r.num("limThreshDb", o.limThreshDb, -40, 0)
+        && r.num("limAttackMs", o.limAttackMs, 0, 100) && r.num("limReleaseMs", o.limReleaseMs, 1, 5000)
+        && r.list("mix", o.mix, 0.0, 4.0);
+}
+
+} // namespace
+
+juce::var outputsToVar(const std::vector<OutputConfig>& outs)
+{
+    juce::Array<juce::var> a;
+    for (auto& o : outs) a.add(outputToVar(o));
+    return a;
+}
+
+juce::var toVar(const SystemState& s)
+{
+    auto root = obj();
+    auto* r = root.getDynamicObject();
+
+    auto dev = obj();
+    dev.getDynamicObject()->setProperty("inputDevice", s.device.inputDevice);
+    dev.getDynamicObject()->setProperty("outputDevice", s.device.outputDevice);
+    dev.getDynamicObject()->setProperty("sampleRate", s.device.sampleRate);
+    dev.getDynamicObject()->setProperty("bufferSize", s.device.bufferSize);
+    r->setProperty("device", dev);
+
+    juce::Array<juce::var> ins;
+    for (auto& i : s.inputs) {
+        auto v = obj();
+        v.getDynamicObject()->setProperty("name", i.name);
+        v.getDynamicObject()->setProperty("role", i.role);
+        ins.add(v);
+    }
+    r->setProperty("inputs", ins);
+    r->setProperty("outputs", outputsToVar(s.outputs));
+
+    auto g = obj();
+    g.getDynamicObject()->setProperty("on", s.gen.on);
+    g.getDynamicObject()->setProperty("signal", s.gen.signal);
+    g.getDynamicObject()->setProperty("levelDb", s.gen.levelDb);
+    g.getDynamicObject()->setProperty("targets", arr(s.gen.targets));
+    r->setProperty("gen", g);
+
+    auto m = obj();
+    m.getDynamicObject()->setProperty("micInput", s.measure.micInput);
+    m.getDynamicObject()->setProperty("ref", s.measure.ref);
+    m.getDynamicObject()->setProperty("refInput", s.measure.refInput);
+    m.getDynamicObject()->setProperty("averaging", s.measure.averaging);
+    m.getDynamicObject()->setProperty("smoothing", s.measure.smoothing);
+    r->setProperty("measure", m);
+
+    auto c = obj();
+    auto lat = obj();
+    for (auto& [k, v] : s.cal.ioLatency) lat.getDynamicObject()->setProperty(k, v);
+    c.getDynamicObject()->setProperty("ioLatency", lat);
+    c.getDynamicObject()->setProperty("micCalPath", s.cal.micCalPath);
+    r->setProperty("cal", c);
+    return root;
+}
+
+bool outputsFromVar(const juce::var& v, std::vector<OutputConfig>& out, juce::String& err)
+{
+    const auto* a = v.getArray();
+    if (a == nullptr) { err = "outputs: expected an array"; return false; }
+    if (a->size() > kMaxCh) { err = "outputs: too many"; return false; }
+    std::vector<OutputConfig> tmp(size_t(a->size()));
+    for (int i = 0; i < a->size(); ++i)
+        if (!outputFromVar((*a)[i], tmp[size_t(i)], "outputs/" + juce::String(i) + "/", err)) return false;
+    out = std::move(tmp);
+    return true;
+}
+
+bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
+{
+    if (!v.isObject()) { err = "state: expected an object"; return false; }
+    SystemState s;
+
+    if (v.hasProperty("device")) {
+        Reader r { v["device"], "device/", err };
+        if (!(r.str("inputDevice", s.device.inputDevice) && r.str("outputDevice", s.device.outputDevice)
+              && r.num("sampleRate", s.device.sampleRate, 22050, 192000)
+              && r.integer("bufferSize", s.device.bufferSize, 16, 4096))) return false;
+    }
+    if (v.hasProperty("inputs")) {
+        const auto* a = v["inputs"].getArray();
+        if (a == nullptr || a->size() > kMaxCh) { err = "inputs: expected an array"; return false; }
+        for (int i = 0; i < a->size(); ++i) {
+            InputConfig in;
+            Reader r { (*a)[i], "inputs/" + juce::String(i) + "/", err };
+            if (!(r.str("name", in.name) && r.str("role", in.role, { "console", "mic", "loopback", "none" }))) return false;
+            s.inputs.push_back(in);
+        }
+    }
+    if (v.hasProperty("outputs") && !outputsFromVar(v["outputs"], s.outputs, err)) return false;
+    if (v.hasProperty("gen")) {
+        Reader r { v["gen"], "gen/", err };
+        if (!(r.boolean("on", s.gen.on) && r.str("signal", s.gen.signal, { "pink" })
+              && r.num("levelDb", s.gen.levelDb, -80, kGeneratorMaxDb)
+              && r.list("targets", s.gen.targets, 0, kMaxCh - 1))) return false;
+    }
+    if (v.hasProperty("measure")) {
+        Reader r { v["measure"], "measure/", err };
+        if (!(r.integer("micInput", s.measure.micInput, -1, kMaxCh - 1)
+              && r.str("ref", s.measure.ref, { "generator", "input" })
+              && r.integer("refInput", s.measure.refInput, -1, kMaxCh - 1)
+              && r.integer("averaging", s.measure.averaging, 1, 256)
+              && r.integer("smoothing", s.measure.smoothing, 0, 48))) return false;
+    }
+    if (v.hasProperty("cal")) {
+        const auto& c = v["cal"];
+        Reader r { c, "cal/", err };
+        if (!r.str("micCalPath", s.cal.micCalPath)) return false;
+        if (auto* lat = c["ioLatency"].getDynamicObject())
+            for (auto& p : lat->getProperties()) {
+                if (!(p.value.isDouble() || p.value.isInt())) { err = "cal/ioLatency: expected numbers"; return false; }
+                s.cal.ioLatency[p.name.toString()] = double(p.value);
+            }
+    }
+    // Keep mix rows consistent with the input count.
+    for (auto& o : s.outputs) o.mix.resize(s.inputs.size(), 0.0f);
+    out = std::move(s);
+    return true;
+}
+
+bool applyPatch(SystemState& s, const juce::String& path, const juce::var& value, juce::String& err)
+{
+    auto root = toVar(s);
+    auto keys = juce::StringArray::fromTokens(path, "/", "");
+    keys.removeEmptyStrings();
+    if (keys.isEmpty()) { err = "empty path"; return false; }
+
+    // Walk to the parent container; every step must already exist.
+    juce::var node = root;
+    for (int i = 0; i < keys.size() - 1; ++i) {
+        const auto& k = keys[i];
+        if (auto* a = node.getArray()) {
+            const int idx = k.getIntValue();
+            if (!k.containsOnly("0123456789") || idx >= a->size()) { err = path + ": no such element"; return false; }
+            node = (*a)[idx];
+        } else if (node.isObject() && node.hasProperty(k)) {
+            node = node[k.toRawUTF8()];
+        } else { err = path + ": no such field"; return false; }
+    }
+    const auto& last = keys[keys.size() - 1];
+    if (auto* a = node.getArray()) {
+        const int idx = last.getIntValue();
+        if (!last.containsOnly("0123456789") || idx >= a->size()) { err = path + ": no such element"; return false; }
+        a->set(idx, value);
+    } else if (auto* d = node.getDynamicObject()) {
+        // ioLatency is a free-form map; everything else must exist already.
+        const bool isMap = keys.size() >= 2 && keys[keys.size() - 2] == "ioLatency";
+        if (!d->hasProperty(last) && !isMap) { err = path + ": no such field"; return false; }
+        const auto& old = d->getProperty(last);
+        const bool numOld = old.isDouble() || old.isInt() || old.isInt64();
+        const bool numNew = value.isDouble() || value.isInt() || value.isInt64();
+        if (!isMap && !(numOld && numNew) && !(old.isBool() && value.isBool())
+            && !(old.isString() && value.isString()) && !(old.isArray() && value.isArray())) {
+            err = path + ": wrong type";
+            return false;
+        }
+        d->setProperty(last, value);
+    } else { err = path + ": not a container"; return false; }
+
+    return fromVar(root, s, err); // validates everything; s untouched on failure
+}
+
+Params toParams(const SystemState& s)
+{
+    Params p;
+    p.numOut = int(s.outputs.size());
+    for (size_t o = 0; o < s.outputs.size(); ++o) {
+        const auto& c = s.outputs[o];
+        auto& q = p.out[o];
+        q.gainDb = c.gainDb;
+        q.polarityInvert = c.polarityInvert;
+        q.delayMs = c.delayMs;
+        q.mute = c.mute;
+        q.limiterOn = c.limiterOn;
+        q.limThreshDb = c.limThreshDb;
+        q.limAttackMs = c.limAttackMs;
+        q.limReleaseMs = c.limReleaseMs;
+        for (size_t i = 0; i < c.mix.size() && i < size_t(kMaxCh); ++i) q.mix[i] = c.mix[i];
+    }
+    p.gen.on = s.gen.on;
+    p.gen.levelDb = s.gen.levelDb;
+    for (int t : s.gen.targets)
+        if (t >= 0 && t < kMaxCh) p.gen.targets |= (1ull << t);
+    p.measure.micInput = s.measure.micInput;
+    p.measure.ref = s.measure.ref == "input" ? RefSource::PhysicalInput : RefSource::Generator;
+    p.measure.refInput = s.measure.refInput;
+    return p;
+}
+
+} // namespace vt
