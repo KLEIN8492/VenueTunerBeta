@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "measure/Analyzer.h"
 #include "measure/MicCal.h"
@@ -46,7 +47,9 @@ static float meanOver(const vt::Analyzer::Result& r, const std::vector<float>& v
 
 TEST_CASE("Analyzer recovers delay, gain and flat phase of a delayed copy")
 {
+    const bool mtw = GENERATE(true, false);
     vt::Analyzer an;
+    an.setMultiWindow(mtw);
     an.prepare(kSr);
     auto r = runRoom(an, DelayGain(480, 0.5f));
     CHECK_THAT(an.delaySamples(), WithinAbs(480.0, 0.1));
@@ -97,9 +100,11 @@ TEST_CASE("Coherence drops with uncorrelated noise")
 
 TEST_CASE("Analyzer measures a one-pole lowpass at -3 dB at its cutoff")
 {
+    const bool mtw = GENERATE(true, false);
     const float a = float(1.0 - std::exp(-2.0 * kPi * 1000.0 / kSr));
     float y = 0;
     vt::Analyzer an;
+    an.setMultiWindow(mtw);
     an.prepare(kSr);
     an.setSmoothing(0);
     auto r = runRoom(an, [&](float x) { y += a * (x - y); return y; });
@@ -125,4 +130,27 @@ TEST_CASE("MicCal parses REW-style files and interpolates in log frequency")
     CHECK_FALSE(cal.load(f, err));
     CHECK(err.isNotEmpty());
     f.deleteFile();
+}
+
+static float rippleDb(const vt::Analyzer::Result& r, float f0, float f1)
+{
+    float lo = 1e9f, hi = -1e9f;
+    for (size_t i = 0; i < r.freq.size(); ++i)
+        if (r.freq[i] >= f0 && r.freq[i] <= f1) { lo = std::min(lo, r.magDb[i]); hi = std::max(hi, r.magDb[i]); }
+    return hi - lo;
+}
+
+TEST_CASE("Multi-time-window rejects a late reflection in the highs")
+{
+    auto room = [] {
+        return [d = DelayGain(480, 1.0f), refl = DelayGain(480 + 2400, 0.7f)](float x) mutable { return d(x) + refl(x); };
+    };
+    vt::Analyzer mtw, fixed;
+    mtw.setMultiWindow(true);
+    fixed.setMultiWindow(false);
+    for (auto* an : { &mtw, &fixed }) { an->prepare(kSr); an->setSmoothing(0); }
+    auto rm = runRoom(mtw, room(), 8.0);
+    auto rf = runRoom(fixed, room(), 8.0);
+    CHECK(rippleDb(rm, 5000, 15000) < 1.5f);
+    CHECK(rippleDb(rf, 5000, 15000) > 6.0f);
 }

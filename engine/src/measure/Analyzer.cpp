@@ -5,7 +5,6 @@ namespace vt {
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
-constexpr int N = 1 << Analyzer::kFftOrder;
 constexpr int L = 1 << Analyzer::kDelayOrder;
 using cfloat = std::complex<float>;
 }
@@ -15,20 +14,53 @@ Analyzer::Analyzer()
     refHist.assign(kHistory, 0.0f);
     measHist.assign(kHistory, 0.0f);
     scratch.assign(1 << 18, 0.0f);
-    window.resize(N);
-    for (int i = 0; i < N; ++i) window[size_t(i)] = float(0.5 - 0.5 * std::cos(2.0 * kPi * i / N));
-    bufX.assign(2 * N, 0.0f);
-    bufY.assign(2 * N, 0.0f);
     bigX.assign(4 * L, 0.0f);
     bigY.assign(4 * L, 0.0f);
-    sxx.assign(N / 2 + 1, 0.0);
-    syy.assign(N / 2 + 1, 0.0);
-    sxy.assign(N / 2 + 1, {});
+    configureBands();
+}
+
+void Analyzer::Band::clear()
+{
+    frameCount = 0;
+    std::fill(sxx.begin(), sxx.end(), 0.0);
+    std::fill(syy.begin(), syy.end(), 0.0);
+    std::fill(sxy.begin(), sxy.end(), std::complex<double> {});
+}
+
+// Window lengths are chosen in time (defined at 48 kHz, scaled with the rate) so that each
+// band keeps ~1/24-octave resolution at its lowest frequency.
+void Analyzer::configureBands()
+{
+    struct Spec { int order48k; double lo, hi; };
+    std::vector<Spec> specs;
+    if (multiWindow.load()) specs = { { 15, 0, 200 }, { 13, 200, 800 }, { 11, 800, 3200 }, { 9, 3200, 1e9 } };
+    else specs = { { kFixedOrder, 0, 1e9 } };
+    const int rateShift = std::max(0, int(std::lround(std::log2(sr / 48000.0))));
+    bands.clear();
+    bands.resize(specs.size());
+    for (size_t b = 0; b < specs.size(); ++b) {
+        auto& band = bands[b];
+        band.order = std::min(specs[b].order48k + rateShift, 16);
+        band.n = 1 << band.order;
+        band.fLo = specs[b].lo;
+        band.fHi = specs[b].hi;
+        band.avgScale = std::max(1, (1 << kFixedOrder) / band.n);
+        band.fft = std::make_unique<juce::dsp::FFT>(band.order);
+        band.window.resize(size_t(band.n));
+        for (int i = 0; i < band.n; ++i) band.window[size_t(i)] = float(0.5 - 0.5 * std::cos(2.0 * kPi * i / band.n));
+        band.bufX.assign(size_t(2 * band.n), 0.0f);
+        band.bufY.assign(size_t(2 * band.n), 0.0f);
+        band.sxx.assign(size_t(band.n / 2 + 1), 0.0);
+        band.syy.assign(size_t(band.n / 2 + 1), 0.0);
+        band.sxy.assign(size_t(band.n / 2 + 1), {});
+        band.nextFrameEnd = band.n;
+    }
 }
 
 void Analyzer::prepare(double sampleRate)
 {
     sr = sampleRate;
+    resetRequested.store(false);
     refFifo.clear();
     measFifo.clear();
     doReset();
@@ -39,12 +71,8 @@ void Analyzer::doReset()
     std::fill(refHist.begin(), refHist.end(), 0.0f);
     std::fill(measHist.begin(), measHist.end(), 0.0f);
     total = 0;
-    nextFrameEnd = N;
     nextDelayAt = L;
-    frameCount = 0;
-    std::fill(sxx.begin(), sxx.end(), 0.0);
-    std::fill(syy.begin(), syy.end(), 0.0);
-    std::fill(sxy.begin(), sxy.end(), std::complex<double> {});
+    configureBands();
     delayValid = false;
     alignInt = 0;
     delayTotal.store(0.0);
@@ -83,11 +111,12 @@ bool Analyzer::process()
         nextDelayAt = total + int64_t(sr); // re-check once per second
         changed = true;
     }
-    while (nextFrameEnd <= total) {
-        if (delayValid) addFrame(nextFrameEnd);
-        nextFrameEnd += N / 2; // 50 % overlap
-        changed = true;
-    }
+    for (auto& band : bands)
+        while (band.nextFrameEnd <= total) {
+            if (delayValid) addFrame(band, band.nextFrameEnd);
+            band.nextFrameEnd += band.n / 2; // 50 % overlap
+            changed = true;
+        }
     if (changed) buildResult();
     return changed;
 }
@@ -140,11 +169,10 @@ void Analyzer::findDelay()
     if (!delayValid || std::abs(d - double(alignInt)) > 1.0) {
         // Alignment moved: restart averaging so frames with different alignments never mix.
         alignInt = int(std::lround(d));
-        frameCount = 0;
-        std::fill(sxx.begin(), sxx.end(), 0.0);
-        std::fill(syy.begin(), syy.end(), 0.0);
-        std::fill(sxy.begin(), sxy.end(), std::complex<double> {});
-        nextFrameEnd = std::max<int64_t>(N + peak + 1, total);
+        for (auto& band : bands) {
+            band.clear();
+            band.nextFrameEnd = std::max<int64_t>(band.n + peak + 1, total);
+        }
     }
     delayTotal.store(d);
     delayValid = true;
@@ -154,30 +182,31 @@ void Analyzer::findDelay()
     irExcerpt.assign(ir + irStart, ir + irStart + irLen);
 }
 
-void Analyzer::addFrame(int64_t frameEnd)
+void Analyzer::addFrame(Band& band, int64_t frameEnd)
 {
-    const int dInt = alignInt;
-    const int64_t mStart = frameEnd - N, rStart = mStart - dInt;
+    const int N = band.n;
+    const int64_t mStart = frameEnd - N, rStart = mStart - alignInt;
     if (rStart < 0 || rStart < total - kHistory) return;
 
     for (int i = 0; i < N; ++i) {
-        bufX[size_t(i)] = hist(refHist, rStart + i) * window[size_t(i)];
-        bufY[size_t(i)] = hist(measHist, mStart + i) * window[size_t(i)];
+        band.bufX[size_t(i)] = hist(refHist, rStart + i) * band.window[size_t(i)];
+        band.bufY[size_t(i)] = hist(measHist, mStart + i) * band.window[size_t(i)];
     }
-    std::fill(bufX.begin() + N, bufX.end(), 0.0f);
-    std::fill(bufY.begin() + N, bufY.end(), 0.0f);
-    fft.performRealOnlyForwardTransform(bufX.data(), true);
-    fft.performRealOnlyForwardTransform(bufY.data(), true);
-    const auto* X = reinterpret_cast<const cfloat*>(bufX.data());
-    const auto* Y = reinterpret_cast<const cfloat*>(bufY.data());
+    std::fill(band.bufX.begin() + N, band.bufX.end(), 0.0f);
+    std::fill(band.bufY.begin() + N, band.bufY.end(), 0.0f);
+    band.fft->performRealOnlyForwardTransform(band.bufX.data(), true);
+    band.fft->performRealOnlyForwardTransform(band.bufY.data(), true);
+    const auto* X = reinterpret_cast<const cfloat*>(band.bufX.data());
+    const auto* Y = reinterpret_cast<const cfloat*>(band.bufY.data());
 
-    ++frameCount;
-    const double alpha = 1.0 / std::min(frameCount, averaging.load());
+    ++band.frameCount;
+    const int frames = std::min(1024, averaging.load() * band.avgScale);
+    const double alpha = 1.0 / std::min(band.frameCount, frames);
     for (int k = 0; k <= N / 2; ++k) {
         const std::complex<double> x(X[k]), y(Y[k]);
-        sxx[size_t(k)] += alpha * (std::norm(x) - sxx[size_t(k)]);
-        syy[size_t(k)] += alpha * (std::norm(y) - syy[size_t(k)]);
-        sxy[size_t(k)] += alpha * (y * std::conj(x) - sxy[size_t(k)]);
+        band.sxx[size_t(k)] += alpha * (std::norm(x) - band.sxx[size_t(k)]);
+        band.syy[size_t(k)] += alpha * (std::norm(y) - band.syy[size_t(k)]);
+        band.sxy[size_t(k)] += alpha * (y * std::conj(x) - band.sxy[size_t(k)]);
     }
 }
 
@@ -189,10 +218,11 @@ void Analyzer::buildResult()
     r.delayValid = delayValid;
     r.ir = irExcerpt;
     r.irStart = irStart;
-    r.frames = frameCount;
+    int minFrames = bands.empty() ? 0 : bands[0].frameCount;
+    for (auto& band : bands) minFrames = std::min(minFrames, band.frameCount);
+    r.frames = minFrames;
 
-    if (frameCount > 0) {
-        const double df = sr / N;
+    if (minFrames > 0) {
         const double frac = r.delaySamples - double(alignInt); // sub-sample remainder
         const int sm = smoothing.load();
         const double halfBand = sm > 0 ? 0.5 / sm : 1.0 / 48.0;
@@ -202,6 +232,12 @@ void Analyzer::buildResult()
         for (int i = 0;; ++i) {
             const double f = 20.0 * std::pow(2.0, i / 24.0);
             if (f > 20000.0) break;
+            const Band* bp = &bands.back();
+            for (auto& band : bands)
+                if (f >= band.fLo && f < band.fHi) { bp = &band; break; }
+            const Band& band = *bp;
+            const int N = band.n;
+            const double df = sr / N;
             int k0 = int(std::ceil(f * std::pow(2.0, -halfBand) / df));
             int k1 = int(std::floor(f * std::pow(2.0, halfBand) / df));
             if (sm == 0 || k1 < k0) k0 = k1 = int(std::lround(f / df));
@@ -212,9 +248,9 @@ void Analyzer::buildResult()
             for (int k = k0; k <= k1; ++k) {
                 // Remove the fractional part of the delay so phase is flat for a pure delay.
                 const double w = 2.0 * kPi * (k * df) * frac / sr;
-                pxy += sxy[size_t(k)] * std::polar(1.0, w);
-                px += sxx[size_t(k)];
-                py += syy[size_t(k)];
+                pxy += band.sxy[size_t(k)] * std::polar(1.0, w);
+                px += band.sxx[size_t(k)];
+                py += band.syy[size_t(k)];
             }
             const std::complex<double> h = px > 0 ? pxy / px : std::complex<double> {};
             r.freq.push_back(float(f));
