@@ -7,7 +7,7 @@ static vt::SystemState sample()
     vt::SystemState s;
     s.sources = { { "Console L", "program", 0 }, { "Mic FOH", "mic", 1 } };
     s.outputs.resize(4);
-    for (int i = 0; i < 4; ++i) { s.outputs[size_t(i)].name = "Out " + juce::String(i + 1); s.outputs[size_t(i)].channel = i; s.outputs[size_t(i)].mix = { 0, 0 }; }
+    for (int i = 0; i < 4; ++i) { s.outputs[size_t(i)].name = "Out " + juce::String(i + 1); s.outputs[size_t(i)].channel = i; s.outputs[size_t(i)].id = i + 1; s.outputs[size_t(i)].mix = { 0, 0 }; }
     s.outputs[0].name = "Main L";
     s.outputs[0].mix[0] = 1.0f;
     s.outputs[3].name = "Sub";

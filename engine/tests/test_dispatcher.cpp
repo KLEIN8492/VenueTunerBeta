@@ -138,3 +138,28 @@ TEST_CASE("Dispatcher: snapshot on another interface asks for a remap")
     r = f.d->handle(cmd(R"({"id":6,"cmd":"snapshot.recall","args":{"name":"Show2"}})"));
     CHECK_FALSE(r["result"].hasProperty("needsRemap"));
 }
+
+TEST_CASE("Dispatcher: outputs keep their processing slot when others are removed or moved")
+{
+    Fixture f;
+    auto& s = f.d->stateForTest();
+    f.d->handle(cmd(R"({"id":1,"cmd":"routing.addOutput","args":{"preset":"single"}})"));
+    REQUIRE(s.outputs.size() == 3);
+    const int idA = s.outputs[0].id, idB = s.outputs[1].id, idC = s.outputs[2].id;
+    CHECK(idA != idB);
+    CHECK(idB != idC);
+    const int slotB = f.d->slotForTest(idB), slotC = f.d->slotForTest(idC);
+
+    f.d->handle(cmd(R"({"id":2,"cmd":"routing.removeOutput","args":{"index":0}})"));
+    CHECK(f.d->slotForTest(idB) == slotB);
+    CHECK(f.d->slotForTest(idC) == slotC);
+    CHECK(f.d->slotForTest(idA) == -1);
+
+    f.d->handle(cmd(R"({"id":3,"cmd":"routing.moveOutput","args":{"index":1,"to":0}})"));
+    CHECK(s.outputs[0].id == idC);
+    CHECK(f.d->slotForTest(idC) == slotC);
+
+    f.d->handle(cmd(R"({"id":4,"cmd":"routing.duplicateOutput","args":{"index":0}})"));
+    CHECK(s.outputs[1].id != idC);                         // the copy has its own identity…
+    CHECK(f.d->slotForTest(s.outputs[1].id) != slotC);     // …and its own slot
+}

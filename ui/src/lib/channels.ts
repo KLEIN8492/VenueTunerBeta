@@ -20,12 +20,20 @@ export class Channels {
   async refresh(): Promise<void> {
     try {
       const c = await this.engine.request<{ inputs: string[]; outputs: string[] }>('device.channels');
-      this.inputs = c.inputs;
-      this.outputs = c.outputs;
+      // Some drivers (e.g. built-in Mac devices) name channels "1", "2"…: make them readable.
+      const tidy = (names: string[], prefix: string) => names.map((n, i) => (/^\s*\d*\s*$/.test(n) ? `${prefix} ${i + 1}` : n));
+      this.inputs = tidy(c.inputs, 'In');
+      this.outputs = tidy(c.outputs, 'Out');
       this.listeners.forEach((cb) => cb());
     } catch { /* engine not connected yet */ }
   }
 
-  inLabel(ch: number): string { return ch < 0 ? '—' : `${ch + 1} · ${this.inputs[ch] ?? 'missing'}`; }
-  outLabel(ch: number): string { return ch < 0 ? 'unassigned' : `${ch + 1} · ${this.outputs[ch] ?? 'missing'}`; }
+  // "Out 1" alone when the name already says it; "3 · Analog 3" style otherwise.
+  private label(names: string[], ch: number, prefix: string): string {
+    const n = names[ch];
+    if (n === undefined) return `${prefix} ${ch + 1} (not on this interface)`;
+    return n === `${prefix} ${ch + 1}` ? n : `${ch + 1} · ${n}`;
+  }
+  inLabel(ch: number): string { return ch < 0 ? '—' : this.label(this.inputs, ch, 'In'); }
+  outLabel(ch: number): string { return ch < 0 ? 'unassigned' : this.label(this.outputs, ch, 'Out'); }
 }

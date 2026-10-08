@@ -54,6 +54,7 @@ constexpr int kMaxPeq = 16, kMaxAp = 4, kMaxSources = 64, kMaxOutputs = 64;
 struct OutputConfig
 {
     juce::String name, type = "full", colour = "#7fb2ff";
+    int id = 0;       // stable identity (processing slot follows it); assigned when 0
     int channel = -1; // physical output, -1 = unassigned (processed, silent)
     float gainDb = 0.0f;
     bool polarityInvert = false;

@@ -36,6 +36,7 @@ public:
 
     void process(const OutputParams& p, float* buf, int n, bool muteAll)
     {
+        if (p.slotGen != lastSlotGen) { lastSlotGen = p.slotGen; resetState(); }
         const float g = std::pow(10.0f, p.gainDb / 20.0f) * (p.polarityInvert ? -1.0f : 1.0f);
         gain.setTargetValue(g);
         muteGain.setTargetValue((p.mute || muteAll) ? 0.0f : 1.0f);
@@ -78,6 +79,19 @@ public:
 
 private:
     static constexpr int kRamp = 256;
+
+    // The slot now belongs to another output: forget the previous one's audio (delay line,
+    // filter memory) and fade in from silence. Rare (patch edits only).
+    void resetState()
+    {
+        delay.clear();
+        for (int k = 0; k < kMaxIir; ++k) { cur[k] = target[k] = Biquad::identity(); state[k].reset(); active[k] = false; }
+        rampLeft = 0;
+        limiter.prepare(sampleRate);
+        gain.setCurrentAndTargetValue(0.0f);
+        muteGain.setCurrentAndTargetValue(0.0f);
+    }
+    uint32_t lastSlotGen = 0;
 
     void startRampIfChanged(const OutputParams& p)
     {

@@ -5,6 +5,7 @@
 #include "server/Snapshots.h"
 #include "measure/Align.h"
 #include <array>
+#include <map>
 #include <functional>
 
 namespace vt {
@@ -75,7 +76,13 @@ private:
         double last = -1;
         int stable = 0;
     } calib;
-    std::array<juce::String, kMaxCh> loadedFir; // path currently in each convolution
+    std::array<juce::String, kMaxCh> loadedFir; // path currently in each slot's convolution
+    std::map<int, int> slotOf;                 // output id -> engine slot
+    std::array<uint32_t, kMaxCh> slotGen {};   // bumped when a slot changes owner
+    void assignSlots();
+public:
+    int slotForTest(int outputId) const { auto it = slotOf.find(outputId); return it == slotOf.end() ? -1 : it->second; }
+private:
 
     struct Sweep
     {

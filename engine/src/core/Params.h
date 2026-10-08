@@ -11,7 +11,9 @@ constexpr int kIirPeq = 0, kIirHp = 16, kIirLp = 20, kIirAp = 24, kMaxIir = 28;
 // Everything the audio thread needs, as plain data (copied through a TripleBuffer).
 struct OutputParams
 {
-    int channel = -1; // physical output this processing channel writes to
+    int channel = -1;  // physical output this processing channel writes to
+    int slot = 0;      // engine processing slot (chain + FIR); stable across patch edits
+    uint32_t slotGen = 0; // changes when the slot is handed to a different output → reset
     float gainDb = 0.0f;
     bool polarityInvert = false;
     float delayMs = 0.0f;

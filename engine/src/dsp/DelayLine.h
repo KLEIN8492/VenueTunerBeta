@@ -29,6 +29,7 @@ public:
     }
 
     int delaySamples() const { return pending; }
+    void clear() { std::fill(buffer.begin(), buffer.end(), 0.0f); current = target = pending; fadePos = -1; }
 
     float process(float x)
     {

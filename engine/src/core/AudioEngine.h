@@ -45,7 +45,7 @@ public:
 
     void setParams(const Params& p) { params.write(p); }
     // Any thread: the convolution swaps the IR in on its background thread and crossfades.
-    void loadFir(int output, juce::AudioBuffer<float>&& ir, double irSampleRate);
+    void loadFir(int slot, juce::AudioBuffer<float>&& ir, double irSampleRate);
     void setMuteAll(bool on) { muteAll.store(on); }
     void unmuteAfterFault() { faultMuted.store(false); }
     Status status(); // also resets peak holds

@@ -132,7 +132,7 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         const int o = int(args["output"]);
         if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
         state.outputs[size_t(o)].fir = {};
-        loadedFir[size_t(o)] = {};
+        loadedFir[size_t(slotOf[state.outputs[size_t(o)].id])] = {};
         commit();
         return toVar(state);
     }
@@ -215,6 +215,27 @@ double Dispatcher::sampleRate()
     return sr > 0 ? sr : state.device.sampleRate;
 }
 
+// Outputs keep their engine slot for life; a freed slot is reset before a new output uses it.
+void Dispatcher::assignSlots()
+{
+    std::map<int, int> next;
+    std::array<bool, kMaxCh> used {};
+    for (auto& o : state.outputs)
+        if (auto it = slotOf.find(o.id); it != slotOf.end()) { next[o.id] = it->second; used[size_t(it->second)] = true; }
+    for (auto& o : state.outputs) {
+        if (next.count(o.id)) continue;
+        for (int sl = 0; sl < kMaxCh; ++sl)
+            if (!used[size_t(sl)]) {
+                used[size_t(sl)] = true;
+                next[o.id] = sl;
+                ++slotGen[size_t(sl)];
+                loadedFir[size_t(sl)] = {}; // the previous owner's FIR must not leak to the new output
+                break;
+            }
+    }
+    slotOf = std::move(next);
+}
+
 bool Dispatcher::loadFirFile(int o, const juce::String& path, juce::String& err)
 {
     juce::AudioBuffer<float> ir;
@@ -225,16 +246,19 @@ bool Dispatcher::loadFirFile(int o, const juce::String& path, juce::String& err)
     f.taps = ir.getNumSamples();
     // Latency of the filter itself (e.g. half the length for linear phase), in engine samples.
     f.latencySamples = juce::roundToInt(FirLoader::peakIndex(ir) * sampleRate() / fileSr);
-    engine.loadFir(o, std::move(ir), fileSr);
-    loadedFir[size_t(o)] = path;
+    assignSlots();
+    const int slot = slotOf[state.outputs[size_t(o)].id];
+    engine.loadFir(slot, std::move(ir), fileSr);
+    loadedFir[size_t(slot)] = path;
     return true;
 }
 
 void Dispatcher::syncFirs()
 {
+    assignSlots();
     for (size_t o = 0; o < state.outputs.size(); ++o) {
         auto& f = state.outputs[o].fir;
-        if (f.path.isEmpty() || f.path == loadedFir[o]) continue;
+        if (f.path.isEmpty() || f.path == loadedFir[size_t(slotOf[state.outputs[o].id])]) continue;
         juce::String err;
         if (!loadFirFile(int(o), f.path, err)) {
             f.on = false;
@@ -253,6 +277,11 @@ void Dispatcher::commit(bool measureChanged)
 {
     syncFirs();
     auto p = toParams(state, sampleRate());
+    for (size_t o = 0; o < state.outputs.size(); ++o) {
+        const int sl = slotOf[state.outputs[o].id];
+        p.out[o].slot = sl;
+        p.out[o].slotGen = slotGen[size_t(sl)];
+    }
     applyTransient(p);
     engine.setParams(p);
     engine.analyzer().setMultiWindow(state.measure.multiWindow);
@@ -346,7 +375,13 @@ juce::var Dispatcher::statusVar()
     set(v, "aligning", alignJob.active);
     juce::Array<juce::var> inPk, outPk, gr;
     for (int c = 0; c < st.numIn; ++c) inPk.add(st.inPeak[size_t(c)]);
-    for (int c = 0; c < st.numOut; ++c) { outPk.add(st.outPeak[size_t(c)]); gr.add(st.limGrDb[size_t(c)]); }
+    // Meters per output (in output order), read from each output's slot.
+    for (auto& o : state.outputs) {
+        auto it = slotOf.find(o.id);
+        const size_t sl = it == slotOf.end() ? 0 : size_t(it->second);
+        outPk.add(it == slotOf.end() ? 0.0f : st.outPeak[sl]);
+        gr.add(it == slotOf.end() ? 0.0f : st.limGrDb[sl]);
+    }
     set(v, "inPeak", inPk);
     set(v, "outPeak", outPk);
     set(v, "limGr", gr);
@@ -529,7 +564,6 @@ bool Dispatcher::replaceState(const SystemState& next, juce::String& err, bool s
     SystemState checked;
     if (!fromVar(toVar(next), checked, err)) return false;
     state = std::move(checked);
-    if (structural) loadedFir.fill({}); // outputs moved: re-load FIRs into the right convolutions
     commit(true);
     return true;
 }
@@ -602,6 +636,7 @@ juce::var Dispatcher::routing(const juce::String& cmd, const juce::var& args, ju
         if (int(next.outputs.size()) >= kMaxOutputs) { err = "too many outputs"; return {}; }
         auto copy = next.outputs[size_t(index)];
         copy.name += " copy";
+        copy.id = 0; // gets a fresh id (and slot)
         copy.channel = nextFreeOutputChannel(next);
         next.outputs.insert(next.outputs.begin() + index + 1, copy);
     } else if (cmd == "routing.moveOutput") {

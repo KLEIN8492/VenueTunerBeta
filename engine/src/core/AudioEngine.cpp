@@ -249,7 +249,8 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
                 juce::FloatVectorOperations::addWithMultiply(buf, in[c], op.mix[c], n);
         if (p.gen.targets >> o & 1u)
             juce::FloatVectorOperations::add(buf, genBuf.data(), n);
-        chains[size_t(o)].process(op, buf, n, silence);
+        const int slot = std::clamp(op.slot, 0, kMaxCh - 1);
+        chains[size_t(slot)].process(op, buf, n, silence);
         if (op.channel >= 0 && op.channel < numOut && out[op.channel] != nullptr)
             juce::FloatVectorOperations::copy(out[op.channel], buf, n);
     }

@@ -61,6 +61,7 @@ juce::var outputToVar(const OutputConfig& o)
     d->setProperty("name", o.name);
     d->setProperty("type", o.type);
     d->setProperty("colour", o.colour);
+    d->setProperty("id", o.id);
     d->setProperty("channel", o.channel);
     d->setProperty("gainDb", o.gainDb);
     d->setProperty("polarityInvert", o.polarityInvert);
@@ -223,6 +224,7 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
     if (!v.isObject()) { err = ctx + "expected an object"; return false; }
     Reader r { v, ctx, err };
     return r.str("name", o.name) && r.str("type", o.type) && r.str("colour", o.colour)
+        && r.integer("id", o.id, 0, 1 << 30)
         && r.integer("channel", o.channel, -1, kMaxCh - 1)
         && r.num("gainDb", o.gainDb, -80, 12) && r.boolean("polarityInvert", o.polarityInvert)
         && r.num("delayMs", o.delayMs, 0, 1000) && r.boolean("mute", o.mute)
@@ -421,6 +423,14 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
                     + " is already used by \"" + s.outputs[a].name + "\"";
                 return false;
             }
+    // Every output has a unique id (new, migrated or duplicated outputs get one here).
+    int nextId = 1;
+    for (auto& o : s.outputs) nextId = std::max(nextId, o.id + 1);
+    for (size_t a = 0; a < s.outputs.size(); ++a) {
+        bool dup = s.outputs[a].id <= 0;
+        for (size_t b = 0; b < a && !dup; ++b) dup = s.outputs[b].id == s.outputs[a].id;
+        if (dup) s.outputs[a].id = nextId++;
+    }
     std::vector<int> targets;
     for (int t : s.gen.targets)
         if (t < int(s.outputs.size())) targets.push_back(t);
@@ -488,6 +498,7 @@ Params toParams(const SystemState& s, double sampleRate)
         q.limAttackMs = c.limAttackMs;
         q.limReleaseMs = c.limReleaseMs;
         q.channel = c.channel;
+        q.slot = int(o); // default 1:1; the dispatcher maps stable ids to slots
         // Resolve the source mix to physical input gains. Only program sources can feed
         // an output: measurement mics and loopbacks never reach the PA.
         for (size_t i = 0; i < c.mix.size() && i < s.sources.size(); ++i) {
