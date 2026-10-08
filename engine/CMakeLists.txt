@@ -34,14 +34,9 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 # ---- core library: everything except main(), shared by the engine and tests ----
-add_library(vt_core STATIC
-  src/core/SystemState.cpp
-  src/core/AudioEngine.cpp
-  src/measure/Analyzer.cpp
-  src/measure/MicCal.cpp
-  src/server/Snapshots.cpp
-  src/server/Dispatcher.cpp
-  src/server/Server.cpp)
+file(GLOB_RECURSE VT_CORE_SOURCES CONFIGURE_DEPENDS src/*.cpp)
+list(REMOVE_ITEM VT_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+add_library(vt_core STATIC ${VT_CORE_SOURCES})
 
 target_include_directories(vt_core PUBLIC src)
 target_compile_definitions(vt_core PUBLIC
@@ -73,13 +68,8 @@ target_link_libraries(VenueTunerEngine PRIVATE vt_core)
 
 # ---- tests ----
 enable_testing()
-add_executable(vt_tests
-  tests/test_rt.cpp
-  tests/test_dsp.cpp
-  tests/test_analyzer.cpp
-  tests/test_state.cpp
-  tests/test_engine.cpp
-  tests/test_dispatcher.cpp)
+file(GLOB VT_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
+add_executable(vt_tests ${VT_TEST_SOURCES})
 target_link_libraries(vt_tests PRIVATE vt_core Catch2::Catch2WithMain)
 include(${catch2_SOURCE_DIR}/extras/Catch.cmake)
 catch_discover_tests(vt_tests)
