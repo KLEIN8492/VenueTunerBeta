@@ -38,6 +38,7 @@ void designOutputIir(const OutputConfig& o, double sr, Biquad* slots)
         const auto& a = o.ap[i];
         if (a.on) slots[kIirAp + int(i)] = a.order == 1 ? design::allpass1(a.freq, sr) : design::allpass2(a.freq, a.q, sr);
     }
+    if (o.airGainDb != 0.0f) slots[kIirAir] = design::highShelf(o.airFreq, 0.707, o.airGainDb, sr);
 }
 
 } // namespace vt

@@ -319,6 +319,10 @@ export class EqEditor {
       </table>
       <div class="row"><button data-act="addAp" ${o.ap.length >= MAX_AP ? 'disabled' : ''}>+ all-pass</button></div>
 
+      <h2>Air compensation</h2>
+      <div class="row" data-k="air"><label>Distance</label><input type="number" data-f="airDistanceM" value="${o.airDistanceM ?? 0}" step="1" min="0" max="300" style="width:58px"/><span class="dim">m to its audience</span></div>
+      <div class="dim">${!this.engine.state?.air.enabled ? 'Off: enable AIR in the toolbar.' : o.airGainDb ? `now ${o.airGainDb > 0 ? '+' : ''}${o.airGainDb} dB shelf from ${Math.round(o.airFreq)} Hz` : (o.airDistanceM ? 'no correction needed' : 'set a distance to compensate')}</div>
+
       <h2>FIR</h2>
       <div class="row" data-k="fir"><label><input type="checkbox" data-f="on" ${o.fir.on ? 'checked' : ''} ${o.fir.taps ? '' : 'disabled'}/> on</label>
         <span class="grow dim" title="${esc(o.fir.path)}">${o.fir.taps ? esc(o.fir.path.split('/').pop() ?? '') : 'none loaded'}</span></div>
@@ -368,6 +372,9 @@ export class EqEditor {
     } else if (k === 'hp' || k === 'lp') {
       (o[k] as unknown as Record<string, unknown>)[f] = value;
       this.send(`${k}/${f}`, value);
+    } else if (k === 'air') {
+      (o as unknown as Record<string, unknown>)[f] = value;
+      this.send(f, value);
     } else if (k === 'fir') {
       o.fir.on = Boolean(value);
       this.send('fir/on', value);

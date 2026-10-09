@@ -136,6 +136,12 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         commit();
         return true;
     }
+    if (cmd == "air.setReference") { // "the system was tuned in these conditions"
+        state.air.refTempC = state.air.tempC;
+        state.air.refHumidity = state.air.humidity;
+        commit();
+        return toVar(state);
+    }
     if (cmd == "spl.resetLeq") { engine.analyzer().spl().resetLeq(); return true; }
     if (cmd == "rta.setResolution") { engine.analyzer().rta().setResolution(int(args["bands"])); return true; }
 
@@ -308,6 +314,7 @@ void Dispatcher::syncFirs()
 
 void Dispatcher::commit(bool measureChanged)
 {
+    state.updateAir(sampleRate());
     syncFirs();
     auto p = toParams(state, sampleRate());
     for (size_t o = 0; o < state.outputs.size(); ++o) {

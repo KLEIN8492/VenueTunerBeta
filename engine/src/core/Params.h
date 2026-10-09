@@ -5,8 +5,9 @@
 namespace vt {
 
 constexpr int kMaxCh = 64;
-// IIR slots per output: 16 PEQ + 4 HP + 4 LP + 4 all-pass (fixed positions so ramps line up).
-constexpr int kIirPeq = 0, kIirHp = 16, kIirLp = 20, kIirAp = 24, kMaxIir = 28;
+// IIR slots per output: 16 PEQ + 4 HP + 4 LP + 4 all-pass + air shelf (fixed positions so
+// ramps line up).
+constexpr int kIirPeq = 0, kIirHp = 16, kIirLp = 20, kIirAp = 24, kIirAir = 28, kMaxIir = 29;
 
 // Everything the audio thread needs, as plain data (copied through a TripleBuffer).
 struct OutputParams

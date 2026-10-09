@@ -270,3 +270,20 @@ engine.on('status', (st) => {
   ($('redoBtn') as HTMLButtonElement).disabled = !st.canRedo;
   $('undoBtn').title = `Undo (⌘Z) · ${st.canUndo} step${st.canUndo === 1 ? '' : 's'}`;
 });
+
+// ---------------------------------------------------------------- air compensation
+$('airBtn').onclick = () => { $('airPanel').hidden = !$('airPanel').hidden; };
+function renderAir(st: import('./lib/types').SystemState): void {
+  const a = st.air;
+  $('airBtn').textContent = a.enabled ? `AIR ${a.tempC}°C ${a.humidity}%` : 'AIR off';
+  $('airBtn').className = a.enabled ? 'on' : '';
+  ($('airOn') as HTMLInputElement).checked = a.enabled;
+  if (document.activeElement !== $('airT')) ($('airT') as HTMLInputElement).value = String(a.tempC);
+  if (document.activeElement !== $('airH')) ($('airH') as HTMLInputElement).value = String(a.humidity);
+  $('airRefTxt').textContent = `tuned at ${a.refTempC}°C ${a.refHumidity}%`;
+}
+engine.on('state', renderAir);
+$('airOn').onchange = (e) => report(engine.patch('air/enabled', (e.target as HTMLInputElement).checked));
+$('airT').onchange = (e) => report(engine.patch('air/tempC', Number((e.target as HTMLInputElement).value)));
+$('airH').onchange = (e) => report(engine.patch('air/humidity', Number((e.target as HTMLInputElement).value)));
+$('airRef').onclick = () => { if (confirm('Store the current temperature and humidity as the conditions the system was tuned in?')) report(engine.request('air.setReference')); };

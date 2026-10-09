@@ -112,6 +112,7 @@ export function outputSections(o: OutputConfig, sr: number): Biquad[] {
     ...crossover(o.hp?.type ?? 'off', true, o.hp?.freq ?? 100, sr),
     ...crossover(o.lp?.type ?? 'off', false, o.lp?.freq ?? 100, sr),
     ...(o.ap ?? []).filter((a) => a.on).map((a) => (a.order === 1 ? design.allpass1(a.freq, sr) : design.allpass2(a.freq, a.q, sr))),
+    ...(o.airGainDb ? [design.highShelf(o.airFreq, 0.707, o.airGainDb, sr)] : []), // air compensation (engine-derived)
   ];
 }
 

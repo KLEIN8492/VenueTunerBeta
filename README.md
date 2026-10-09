@@ -74,7 +74,17 @@ Settings, snapshots and calibration live in `~/Library/Application Support/Venue
    - **View → RTA**: real-time 1/3 or 1/6-octave spectrum of the mic (works on show music, no generator needed).
    - **Room tab**: after a log sweep, EDT / T20 / T30 per octave (63 Hz–8 kHz) with decay curves.
    - **Traces → Import…**: REW / Smaart / VenueTuner text exports, to compare with old measurements.
-6. **Interface latency**: the driver-reported value is used automatically. For precision,
+6. **Matrix** (Measurement window): define groups (outputs played together) and mic positions.
+   Put the mic at a position and press ▶: each group plays alone, is captured, quality-checked
+   (retried once if disturbed) and labelled "Group @ Position". Move the mic, repeat. "avg" averages
+   a group over all positions for Auto-EQ. One mic is enough.
+7. **Speaker presets** (EQ editor in Live): save an output's speaker processing (crossover, EQ,
+   all-pass, limiter, polarity, level, FIR) and apply it to other outputs; delay and routing stay.
+   Export/import `.vtpreset` files to share them (the FIR is embedded).
+8. **AIR** (Live toolbar): enter the temperature and humidity, press "Tuned now" when the system is
+   tuned, and give each output its distance to the audience. As the air changes, a high shelf
+   restores the HF the air absorbs (ISO 9613-1).
+9. **Interface latency**: the driver-reported value is used automatically. For precision,
    cable an output to an input and run *Calibrate* in Settings once per device/rate/buffer.
 
 Snapshots store the patch (inputs, outputs, channels), routing and all processing. Recalling one

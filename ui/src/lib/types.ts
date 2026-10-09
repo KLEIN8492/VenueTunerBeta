@@ -14,6 +14,7 @@ export interface OutputConfig {
   name: string; type: string; colour: string;
   channel: number; // physical output, -1 = unassigned
   preset?: string;  // speaker preset last applied
+  airDistanceM: number; airFreq: number; airGainDb: number; // air compensation (freq/gain derived by the engine)
   gainDb: number; polarityInvert: boolean; delayMs: number; mute: boolean;
   limiterOn: boolean; limThreshDb: number; limAttackMs: number; limReleaseMs: number;
   mix: number[];
@@ -27,6 +28,7 @@ export interface SystemState {
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
   measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean;
              positions: string[]; groups: { name: string; outputs: number[] }[] };
+  air: { enabled: boolean; tempC: number; humidity: number; pressureKPa: number; refTempC: number; refHumidity: number };
   cal: { ioLatency: Record<string, number>; micCalPath: string; splOffset: Record<string, number> };
 }
 

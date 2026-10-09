@@ -47,6 +47,11 @@
     <div class="toolbar">
       <button id="muteAll">MUTE ALL</button>
       <span id="splLive" class="big" style="min-width:120px"></span>
+      <button id="airBtn" title="Air absorption compensation">AIR off</button>
+      <span id="airPanel" hidden><label><input type="checkbox" id="airOn"/> on</label>
+        <input type="number" id="airT" step="0.5" style="width:56px"/>°C <input type="number" id="airH" step="1" style="width:50px"/>% RH
+        <button id="airRef" title="store the current conditions as those of the tuning">Tuned now</button>
+        <span id="airRefTxt" class="dim"></span></span>
       <button id="undoBtn" title="Undo (⌘Z)">↶</button><button id="redoBtn" title="Redo (⇧⌘Z)">↷</button>
       <span class="dim">Click a strip name to edit its filters · ⌘-click: multi-select · hold ⇧ while changing a value to apply it to all selected</span>
     </div>

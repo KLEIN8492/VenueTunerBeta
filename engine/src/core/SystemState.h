@@ -56,6 +56,8 @@ struct OutputConfig
     juce::String name, type = "full", colour = "#7fb2ff";
     int id = 0;       // stable identity (processing slot follows it); assigned when 0
     juce::String preset; // speaker preset last applied (display only)
+    float airDistanceM = 0.0f;                 // distance to the audience it covers; 0 = no air compensation
+    float airFreq = 8000.0f, airGainDb = 0.0f; // derived by the engine from the air conditions
     int channel = -1; // physical output, -1 = unassigned (processed, silent)
     float gainDb = 0.0f;
     bool polarityInvert = false;
@@ -97,6 +99,14 @@ struct MeasureConfig
     bool multiWindow = true;
 };
 
+// Air conditions now and when the system was tuned (for HF absorption compensation).
+struct AirConfig
+{
+    bool enabled = false;
+    float tempC = 20.0f, humidity = 50.0f, pressureKPa = 101.325f;
+    float refTempC = 20.0f, refHumidity = 50.0f;
+};
+
 struct CalibrationData
 {
     std::map<juce::String, double> ioLatency; // "outDev|inDev|sr|buffer" -> samples
@@ -111,8 +121,11 @@ struct SystemState
     std::vector<OutputConfig> outputs;
     GeneratorConfig gen;
     MeasureConfig measure;
+    AirConfig air;
     CalibrationData cal;
 
+    // Recompute each output's air-compensation shelf from the conditions.
+    void updateAir(double sampleRate);
     // First run only (no sources, no outputs): Input 1/2 and Main L/R patched 1:1, unrouted.
     void ensureDefaults(int numIn, int numOut);
     // Remove a source and its mix column; fix measurement references.

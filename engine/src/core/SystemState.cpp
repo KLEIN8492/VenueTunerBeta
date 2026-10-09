@@ -1,8 +1,21 @@
 #include "core/SystemState.h"
 #include "dsp/FilterDesign.h"
+#include "dsp/AirAbsorption.h"
 #include <cmath>
 
 namespace vt {
+
+void SystemState::updateAir(double sr)
+{
+    for (auto& o : outputs) {
+        air::Shelf s;
+        if (air.enabled && o.airDistanceM > 0)
+            s = air::compensation(o.airDistanceM, { air.tempC, air.humidity, air.pressureKPa },
+                                  { air.refTempC, air.refHumidity, air.pressureKPa }, sr);
+        o.airFreq = float(s.freq);
+        o.airGainDb = float(s.gainDb);
+    }
+}
 
 void SystemState::ensureDefaults(int numIn, int numOut)
 {
@@ -69,6 +82,9 @@ juce::var outputToVar(const OutputConfig& o)
     d->setProperty("colour", o.colour);
     d->setProperty("id", o.id);
     d->setProperty("preset", o.preset);
+    d->setProperty("airDistanceM", o.airDistanceM);
+    d->setProperty("airFreq", o.airFreq);
+    d->setProperty("airGainDb", o.airGainDb);
     d->setProperty("channel", o.channel);
     d->setProperty("gainDb", o.gainDb);
     d->setProperty("polarityInvert", o.polarityInvert);
@@ -232,6 +248,7 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
     Reader r { v, ctx, err };
     return r.str("name", o.name) && r.str("type", o.type) && r.str("colour", o.colour)
         && r.integer("id", o.id, 0, 1 << 30) && r.str("preset", o.preset)
+        && r.num("airDistanceM", o.airDistanceM, 0, 300) && r.num("airFreq", o.airFreq, 100, 24000) && r.num("airGainDb", o.airGainDb, -12, 12)
         && r.integer("channel", o.channel, -1, kMaxCh - 1)
         && r.num("gainDb", o.gainDb, -80, 12) && r.boolean("polarityInvert", o.polarityInvert)
         && r.num("delayMs", o.delayMs, 0, 1000) && r.boolean("mute", o.mute)
@@ -368,6 +385,15 @@ juce::var toVar(const SystemState& s)
     m.getDynamicObject()->setProperty("groups", groups);
     r->setProperty("measure", m);
 
+    auto air = obj();
+    air.getDynamicObject()->setProperty("enabled", s.air.enabled);
+    air.getDynamicObject()->setProperty("tempC", s.air.tempC);
+    air.getDynamicObject()->setProperty("humidity", s.air.humidity);
+    air.getDynamicObject()->setProperty("pressureKPa", s.air.pressureKPa);
+    air.getDynamicObject()->setProperty("refTempC", s.air.refTempC);
+    air.getDynamicObject()->setProperty("refHumidity", s.air.refHumidity);
+    r->setProperty("air", air);
+
     auto c = obj();
     auto lat = obj();
     for (auto& [k, v] : s.cal.ioLatency) lat.getDynamicObject()->setProperty(k, v);
@@ -428,6 +454,12 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
         if (!objects(v["measure"], "groups", s.measure.groups, 64, "measure/", err, [](Reader& g, MeasureGroup& x) {
                 return g.str("name", x.name) && g.list("outputs", x.outputs, 0, kMaxOutputs - 1);
             })) return false;
+    }
+    if (v.hasProperty("air")) {
+        Reader r { v["air"], "air/", err };
+        if (!(r.boolean("enabled", s.air.enabled) && r.num("tempC", s.air.tempC, -30, 55) && r.num("humidity", s.air.humidity, 0, 100)
+              && r.num("pressureKPa", s.air.pressureKPa, 60, 110) && r.num("refTempC", s.air.refTempC, -30, 55)
+              && r.num("refHumidity", s.air.refHumidity, 0, 100))) return false;
     }
     if (v.hasProperty("cal")) {
         const auto& c = v["cal"];
