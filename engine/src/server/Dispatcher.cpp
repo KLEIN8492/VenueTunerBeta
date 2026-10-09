@@ -9,7 +9,8 @@ juce::var object() { return juce::var(new juce::DynamicObject()); }
 void set(juce::var& o, const juce::Identifier& k, const juce::var& v) { o.getDynamicObject()->setProperty(k, v); }
 }
 
-Dispatcher::Dispatcher(AudioEngine& e, juce::File dataDir) : engine(e), snapshots(dataDir), presets(dataDir)
+Dispatcher::Dispatcher(AudioEngine& e, juce::File dataDir)
+    : engine(e), snapshots(dataDir), presets(dataDir), levelLogger(dataDir.getChildFile("level-logs"))
 {
     startTimer(250);
 }
@@ -388,6 +389,18 @@ void Dispatcher::finishCalibration(bool ok, double samples, const juce::String& 
 void Dispatcher::timerCallback()
 {
     if (sweepJob.active) tickSweep();
+    // Level logger: asleep in this version (see core/Features.h). When enabled, one row per second.
+    if constexpr (features::kLevelLogger) {
+        if (++loggerTicks >= 4 && state.measure.micSource >= 0) {
+            loggerTicks = 0;
+            const auto r = engine.analyzer().spl().reading();
+            const auto c = splCal();
+            auto at = [&](double v) { return v > -150 ? v + c.offset : -200.0; };
+            juce::String err;
+            levelLogger.append({ juce::Time::getCurrentTime(), at(r.leqWindow[0][1]), at(r.leqWindow[0][2]),
+                                 at(r.leqWindow[4][1]), at(r.leqWindow[4][2]), at(r.cPeak), c.method }, err);
+        }
+    }
     if (matrixJob.active) tickMatrix();
     if (alignJob.active) tickAlign();
     if (calib.active) {

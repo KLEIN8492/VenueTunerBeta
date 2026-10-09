@@ -4,6 +4,8 @@
 #include "measure/MicCal.h"
 #include "server/Snapshots.h"
 #include "server/Presets.h"
+#include "measure/LevelLogger.h"
+#include "core/Features.h"
 #include "measure/Align.h"
 #include <array>
 #include <map>
@@ -89,6 +91,8 @@ private:
     AudioEngine& engine;
     Snapshots snapshots;
     Presets presets;
+    LevelLogger levelLogger;
+    int loggerTicks = 0;
     juce::var presetCommand(const juce::String& cmd, const juce::var& args, juce::String& error);
     SystemState state;
     MicCal micCal;
