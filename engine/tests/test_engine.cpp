@@ -152,3 +152,42 @@ TEST_CASE("Silence after signal does not leave denormals in the output")
     h.run(20000, 0.0f); // ~27 s of silence: states decay towards zero
     for (float y : h.out[0]) CHECK((y == 0.0f || std::fpclassify(y) == FP_NORMAL));
 }
+
+TEST_CASE("Several mics are measured at the same time against one reference")
+{
+    // 3 inputs: 0 console, 1 = output 0 one block later (mic A), 2 = same at half level (mic B).
+    constexpr int kIn = 3, kOut = 2, kBlock = 64;
+    vt::AudioEngine engine;
+    engine.prepareForTest(48000.0, kBlock, kIn, kOut);
+    vt::SystemState s;
+    s.sources = { { "Console", "program", 0 }, { "Mic A", "mic", 1 }, { "Mic B", "mic", 2 } };
+    for (int o = 0; o < kOut; ++o) { vt::OutputConfig c; c.channel = o; c.mix = { 0, 0, 0 }; s.outputs.push_back(c); }
+    s.gen.on = true;
+    s.gen.levelDb = -20.0f;
+    s.gen.targets = { 0 };
+    s.measure.micSource = 1;
+    auto p = vt::toParams(s);
+    p.measure.extraMicInputs[0] = 2;
+    p.measure.numExtra = 1;
+    engine.setParams(p);
+    engine.unmuteAfterFault();
+    REQUIRE(engine.analyzerForSlot(1) != nullptr);
+
+    std::vector<std::vector<float>> in(kIn, std::vector<float>(kBlock)), out(kOut, std::vector<float>(kBlock));
+    std::vector<float> prev(kBlock, 0.0f);
+    for (int b = 0; b < 6000; ++b) {
+        for (int i = 0; i < kBlock; ++i) { in[1][size_t(i)] = prev[size_t(i)]; in[2][size_t(i)] = 0.5f * prev[size_t(i)]; }
+        const float* ins[kIn] = { in[0].data(), in[1].data(), in[2].data() };
+        float* outs[kOut] = { out[0].data(), out[1].data() };
+        engine.processBlock(ins, kIn, outs, kOut, kBlock);
+        prev = out[0];
+        engine.analyzer().process();
+        engine.analyzerForSlot(1)->process();
+    }
+    auto a = engine.analyzer().result(), bRes = engine.analyzerForSlot(1)->result();
+    CHECK_THAT(engine.analyzer().delaySamples(), WithinAbs(64.0, 0.2));
+    CHECK_THAT(engine.analyzerForSlot(1)->delaySamples(), WithinAbs(64.0, 0.2));
+    REQUIRE(!bRes.magDb.empty());
+    CHECK_THAT(a.magDb[100], WithinAbs(0.0, 0.3));
+    CHECK_THAT(bRes.magDb[100], WithinAbs(-6.02, 0.3));
+}

@@ -90,6 +90,7 @@ struct MeasureGroup
 struct MeasureConfig
 {
     std::vector<juce::String> positions; // mic positions ("FOH", "Front"...)
+    std::vector<int> positionMics;       // per position: mic source standing there, -1 = move the main mic
     std::vector<MeasureGroup> groups;
     int micSource = -1;             // index into sources
     juce::String ref = "generator"; // generator (internal loopback) | source
@@ -146,5 +147,9 @@ bool outputsFromVar(const juce::var&, std::vector<OutputConfig>& out, juce::Stri
 // and leave the state unchanged.
 bool applyPatch(SystemState&, const juce::String& path, const juce::var& value, juce::String& error);
 Params toParams(const SystemState&, double sampleRate = 48000.0);
+// Mic sources measured alongside the main mic (from the position assignments), in slot order.
+std::vector<int> extraMicSources(const SystemState&);
+// Analyzer slot of a mic source: 0 = main mic, 1… = extra, -1 = not measured.
+int micSlot(const SystemState&, int source);
 
 } // namespace vt

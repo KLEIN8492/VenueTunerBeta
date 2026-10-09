@@ -126,16 +126,23 @@ private:
         juce::String beforeName;
     } alignJob;
 
-    // Sequenced measurement: each group alone at the current mic position.
+    // Sequenced measurement: each group alone; one capture per position measured at once
+    // (one position with the main mic, or every position that has its own mic).
+    struct Capture
+    {
+        int position = 0, slot = 0;
+        int ticks = 0, stable = 0, settledTicks = -1, attempt = 0;
+        double last = -1;
+        bool done = false;
+    };
     struct Matrix
     {
         bool active = false;
-        int position = 0;
         std::vector<int> groups;
         size_t index = 0;
-        int ticks = 0, stable = 0, settledTicks = -1, attempt = 0;
-        double last = -1;
+        std::vector<Capture> captures;
     } matrixJob;
+    void resetCaptures();
 };
 
 } // namespace vt

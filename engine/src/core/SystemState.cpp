@@ -41,6 +41,7 @@ void SystemState::removeSource(int index)
     auto fix = [index](int& ref) { ref = ref == index ? -1 : (ref > index ? ref - 1 : ref); };
     fix(measure.micSource);
     fix(measure.refSource);
+    for (auto& m : measure.positionMics) fix(m);
     if (measure.ref == "source" && measure.refSource < 0) measure.ref = "generator";
 }
 
@@ -382,6 +383,7 @@ juce::var toVar(const SystemState& s)
         groups.add(x);
     }
     m.getDynamicObject()->setProperty("positions", pos);
+    m.getDynamicObject()->setProperty("positionMics", arr(s.measure.positionMics));
     m.getDynamicObject()->setProperty("groups", groups);
     r->setProperty("measure", m);
 
@@ -451,6 +453,8 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
             if (pa->size() > 64) { err = "measure/positions: at most 64"; return false; }
             for (auto& p : *pa) s.measure.positions.push_back(p.toString());
         }
+        Reader pm { v["measure"], "measure/", err };
+        if (!pm.list("positionMics", s.measure.positionMics, -1, kMaxSources - 1)) return false;
         if (!objects(v["measure"], "groups", s.measure.groups, 64, "measure/", err, [](Reader& g, MeasureGroup& x) {
                 return g.str("name", x.name) && g.list("outputs", x.outputs, 0, kMaxOutputs - 1);
             })) return false;
@@ -495,6 +499,9 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
         for (size_t b = 0; b < a && !dup; ++b) dup = s.outputs[b].id == s.outputs[a].id;
         if (dup) s.outputs[a].id = nextId++;
     }
+    s.measure.positionMics.resize(s.measure.positions.size(), -1); // one entry per position
+    for (auto& m : s.measure.positionMics)
+        if (m >= int(s.sources.size())) m = -1;
     for (auto& g : s.measure.groups) { // drop members that don't exist (any more)
         std::vector<int> kept;
         for (int o : g.outputs)
@@ -587,9 +594,34 @@ Params toParams(const SystemState& s, double sampleRate)
         if (t >= 0 && t < kMaxCh) p.gen.targets |= (1ull << t);
     auto channelOf = [&](int src) { return src >= 0 && src < int(s.sources.size()) ? s.sources[size_t(src)].channel : -1; };
     p.measure.micInput = channelOf(s.measure.micSource);
+    const auto extras = extraMicSources(s);
+    p.measure.numExtra = int(extras.size());
+    for (size_t k = 0; k < extras.size(); ++k) p.measure.extraMicInputs[k] = channelOf(extras[k]);
     p.measure.ref = s.measure.ref == "source" ? RefSource::PhysicalInput : RefSource::Generator;
     p.measure.refInput = channelOf(s.measure.refSource);
     return p;
+}
+
+} // namespace vt
+
+namespace vt {
+
+std::vector<int> extraMicSources(const SystemState& s)
+{
+    std::vector<int> out;
+    for (int m : s.measure.positionMics)
+        if (m >= 0 && m != s.measure.micSource && std::find(out.begin(), out.end(), m) == out.end() && int(out.size()) < kMaxMics - 1)
+            out.push_back(m);
+    return out;
+}
+
+int micSlot(const SystemState& s, int source)
+{
+    if (source < 0) return -1;
+    if (source == s.measure.micSource) return 0;
+    const auto extras = extraMicSources(s);
+    const auto it = std::find(extras.begin(), extras.end(), source);
+    return it == extras.end() ? -1 : 1 + int(it - extras.begin());
 }
 
 } // namespace vt

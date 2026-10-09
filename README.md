@@ -79,7 +79,8 @@ Settings, snapshots and calibration live in `~/Library/Application Support/Venue
 6. **Matrix** (Measurement window): define groups (outputs played together) and mic positions.
    Put the mic at a position and press ▶: each group plays alone, is captured, quality-checked
    (retried once if disturbed) and labelled "Group @ Position". Move the mic, repeat. "avg" averages
-   a group over all positions for Auto-EQ. One mic is enough.
+   a group over all positions for Auto-EQ. One mic is enough; with several mics, give each position
+   its own mic and press "▶ All positions with a mic" to capture them all from one burst.
 7. **Speaker presets** (EQ editor in Live): save an output's speaker processing (crossover, EQ,
    all-pass, limiter, polarity, level, FIR) and apply it to other outputs; delay and routing stay.
    Export/import `.vtpreset` files to share them (the FIR is embedded).

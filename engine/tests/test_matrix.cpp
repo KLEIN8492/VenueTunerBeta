@@ -48,3 +48,24 @@ TEST_CASE("Measurement groups and positions round-trip and validate")
     s.removeOutput(0);
     CHECK(s.measure.groups[0].outputs.empty());
 }
+
+TEST_CASE("Mics assigned to positions become extra analyzer slots")
+{
+    vt::SystemState s;
+    s.sources = { { "Console", "program", 0 }, { "Mic A", "mic", 1 }, { "Mic B", "mic", 2 }, { "Mic C", "mic", 3 } };
+    s.measure.micSource = 1;
+    s.measure.positions = { "FOH", "Front", "Balcony", "Side" };
+    s.measure.positionMics = { 1, 2, 3, 2 }; // main mic at FOH; Mic B twice → one slot
+    CHECK(vt::extraMicSources(s) == std::vector<int> { 2, 3 });
+    CHECK(vt::micSlot(s, 1) == 0);
+    CHECK(vt::micSlot(s, 2) == 1);
+    CHECK(vt::micSlot(s, 3) == 2);
+    CHECK(vt::micSlot(s, 0) == -1);
+    auto p = vt::toParams(s);
+    CHECK(p.measure.numExtra == 2);
+    CHECK(p.measure.extraMicInputs[0] == 2);
+    CHECK(p.measure.extraMicInputs[1] == 3);
+
+    s.removeSource(2); // Mic B gone: its positions fall back to "move the main mic"
+    CHECK(s.measure.positionMics == std::vector<int> { 1, -1, 2, -1 });
+}

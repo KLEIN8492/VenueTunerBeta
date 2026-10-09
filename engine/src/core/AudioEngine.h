@@ -43,13 +43,15 @@ public:
     juce::var channelNames();     // {inputs:[..], outputs:[..]} driver channel names
     juce::var latencyBreakdown(); // per-direction driver latency components
 
-    void setParams(const Params& p) { params.write(p); }
+    void setParams(const Params& p) { ensureExtraAnalyzers(p.measure.numExtra); params.write(p); }
     // Any thread: the convolution swaps the IR in on its background thread and crossfades.
     void loadFir(int slot, juce::AudioBuffer<float>&& ir, double irSampleRate);
     void setMuteAll(bool on) { muteAll.store(on); }
     void unmuteAfterFault() { faultMuted.store(false); }
     Status status(); // also resets peak holds
     Analyzer& analyzer() { return analyzerImpl; }
+    // Analyzer for mic slot k: 0 = main mic, 1… = extra mics (nullptr if not created yet).
+    Analyzer* analyzerForSlot(int k) { return k == 0 ? &analyzerImpl : (k > 0 && k < kMaxMics ? extra[size_t(k - 1)].load() : nullptr); }
 
     // Test hooks: run the callback without a device.
     void prepareForTest(double sr, int block, int numIn, int numOut);
@@ -67,11 +69,24 @@ private:
     void prepare(double sr, int block);
     juce::String ensureInitialised();
 
+    // Extra analyzers are created on the control thread before the Params that use them are
+    // published; the audio and analysis threads only ever read the pointers. Never freed while
+    // the engine lives.
+    void ensureExtraAnalyzers(int count);
+
     struct AnalysisThread : juce::Thread
     {
-        explicit AnalysisThread(Analyzer& a) : juce::Thread("vt-analysis"), an(a) {}
-        void run() override { while (!threadShouldExit()) { an.process(); wait(10); } }
-        Analyzer& an;
+        explicit AnalysisThread(AudioEngine& e) : juce::Thread("vt-analysis"), engine(e) {}
+        void run() override
+        {
+            while (!threadShouldExit()) {
+                engine.analyzerImpl.process();
+                for (auto& a : engine.extra)
+                    if (auto* an = a.load()) an->process();
+                wait(10);
+            }
+        }
+        AudioEngine& engine;
     };
 
     juce::AudioDeviceManager dm;
@@ -95,7 +110,9 @@ private:
     std::atomic<int64_t> callbackCount { 0 };
     std::array<std::atomic<float>, kMaxCh> inPeak {};
     Analyzer analyzerImpl;
-    AnalysisThread analysisThread { analyzerImpl };
+    std::array<std::atomic<Analyzer*>, kMaxMics - 1> extra {};
+    std::vector<std::unique_ptr<Analyzer>> extraStorage;
+    AnalysisThread analysisThread { *this };
 };
 
 } // namespace vt

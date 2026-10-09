@@ -889,72 +889,118 @@ std::pair<double, double> Dispatcher::groupBand(const MeasureGroup& g) const
 
 juce::var Dispatcher::startMatrix(const juce::var& args, juce::String& err)
 {
-    if (err = preflight(); err.isNotEmpty()) return {};
+    if (calib.active || sweepJob.active || alignJob.active || matrixJob.active) { err = "another automatic measurement is running"; return {}; }
+    const auto st = engine.status();
+    if (st.faultMuted || st.muteAll) { err = "outputs are muted: unmute first"; return {}; }
+    const auto& m = state.measure;
+
+    // Which positions, measured by which analyzer slot.
+    std::vector<Capture> caps;
+    auto add = [&](int pos) -> bool {
+        const int src = pos < int(m.positionMics.size()) ? m.positionMics[size_t(pos)] : -1;
+        const int slot = src >= 0 ? micSlot(state, src) : (m.micSource >= 0 ? 0 : -1);
+        if (slot < 0) return false;
+        for (auto& c : caps) if (c.slot == slot) return false; // one mic can't be in two places
+        Capture c;
+        c.position = pos;
+        c.slot = slot;
+        caps.push_back(c);
+        return true;
+    };
     const int pos = int(args["position"]);
-    if (pos < 0 || pos >= int(state.measure.positions.size())) { err = "choose a mic position"; return {}; }
+    if (args.hasProperty("all") && bool(args["all"])) {
+        for (int p = 0; p < int(m.positions.size()); ++p)
+            if (p < int(m.positionMics.size()) && m.positionMics[size_t(p)] >= 0) add(p);
+        if (caps.empty()) { err = "no position has its own mic: assign mics to positions, or measure one position at a time"; return {}; }
+    } else {
+        if (pos < 0 || pos >= int(m.positions.size())) { err = "choose a mic position"; return {}; }
+        if (!add(pos)) { err = "choose a measurement mic (Measure tab) or assign one to this position"; return {}; }
+    }
+    for (auto& c : caps)
+        if (const int src = c.slot == 0 ? m.micSource : extraMicSources(state)[size_t(c.slot - 1)];
+            src < 0 || state.sources[size_t(src)].channel < 0) { err = "a mic used here is not patched to an input"; return {}; }
+
     std::vector<int> groups;
     if (const auto* a = args["groups"].getArray()) for (auto& g : *a) groups.push_back(int(g));
-    else for (int g = 0; g < int(state.measure.groups.size()); ++g) groups.push_back(g);
+    else for (int g = 0; g < int(m.groups.size()); ++g) groups.push_back(g);
     std::vector<int> valid;
     for (int g : groups)
-        if (g >= 0 && g < int(state.measure.groups.size()) && !state.measure.groups[size_t(g)].outputs.empty()) valid.push_back(g);
+        if (g >= 0 && g < int(m.groups.size()) && !m.groups[size_t(g)].outputs.empty()) valid.push_back(g);
     if (valid.empty()) { err = "no measurement groups with outputs: create them first"; return {}; }
+
     matrixJob = {};
     matrixJob.active = true;
-    matrixJob.position = pos;
     matrixJob.groups = valid;
-    engine.analyzer().reset();
-    commit();
-    emit("matrix", { { "stage", "measuring" }, { "group", valid[0] }, { "position", pos } });
+    matrixJob.captures = caps;
+    commit(); // generator on the first group (and extra analyzers created if needed)
+    resetCaptures();
+    for (auto& c : caps) emit("matrix", { { "stage", "measuring" }, { "group", valid[0] }, { "position", c.position } });
     return "started";
+}
+
+void Dispatcher::resetCaptures()
+{
+    for (auto& c : matrixJob.captures) {
+        c.ticks = c.stable = 0;
+        c.settledTicks = -1;
+        c.last = -1;
+        c.done = false;
+        c.attempt = 0;
+        if (auto* an = engine.analyzerForSlot(c.slot)) an->reset();
+    }
 }
 
 void Dispatcher::tickMatrix()
 {
     auto& j = matrixJob;
-    ++j.ticks;
-    const auto r = engine.analyzer().result();
-    if (r.delayValid && j.ticks > 4) {
-        j.stable = std::abs(r.delaySamples - j.last) < 0.5 ? j.stable + 1 : 0;
-        j.last = r.delaySamples;
-        if (j.stable >= 3 && j.settledTicks < 0) j.settledTicks = j.ticks; // arrival stable: start averaging
-    }
     const int group = j.groups[j.index];
     const auto& g = state.measure.groups[size_t(group)];
-    const bool averaged = j.settledTicks >= 0 && j.ticks - j.settledTicks >= 12; // + 3 s of averaging
-    const bool timedOut = j.ticks > 72;                                           // 18 s per attempt
-    if (!averaged && !timedOut) return;
-
     const auto [lo, hi] = groupBand(g);
-    const double q = captureQuality(r, lo, hi);
-    const bool ok = averaged && captureAccepted(r, lo, hi);
-    auto next = [&] {
-        j.ticks = j.stable = 0;
-        j.settledTicks = -1;
-        j.last = -1;
-        engine.analyzer().reset();
-    };
-    if (!ok && j.attempt == 0) { // disturbed or no arrival: one more try
-        j.attempt = 1;
-        emit("matrix", { { "stage", "retry" }, { "group", group }, { "position", j.position }, { "quality", q } });
-        next();
-        return;
+    bool allDone = true;
+    for (auto& c : j.captures) {
+        if (c.done) continue;
+        allDone = false;
+        auto* an = engine.analyzerForSlot(c.slot);
+        if (an == nullptr) { c.done = true; continue; }
+        ++c.ticks;
+        const auto r = an->result();
+        if (r.delayValid && c.ticks > 4) {
+            c.stable = std::abs(r.delaySamples - c.last) < 0.5 ? c.stable + 1 : 0;
+            c.last = r.delaySamples;
+            if (c.stable >= 3 && c.settledTicks < 0) c.settledTicks = c.ticks; // arrival stable: start averaging
+        }
+        const bool averaged = c.settledTicks >= 0 && c.ticks - c.settledTicks >= 12; // + 3 s of averaging
+        const bool timedOut = c.ticks > 72;                                           // 18 s per attempt
+        if (!averaged && !timedOut) continue;
+        const double q = captureQuality(r, lo, hi);
+        const bool ok = averaged && captureAccepted(r, lo, hi);
+        if (!ok && c.attempt == 0) { // disturbed or no arrival: this mic tries once more
+            c.attempt = 1;
+            c.ticks = c.stable = 0;
+            c.settledTicks = -1;
+            c.last = -1;
+            an->reset();
+            emit("matrix", { { "stage", "retry" }, { "group", group }, { "position", c.position }, { "quality", q } });
+            continue;
+        }
+        c.done = true;
+        const auto name = g.name + " @ " + state.measure.positions[size_t(c.position)];
+        if (ok) emit("matrix", { { "stage", "captured" }, { "group", group }, { "position", c.position }, { "quality", q }, { "trace", traceVar(r, name) } });
+        else emit("matrix", { { "stage", "rejected" }, { "group", group }, { "position", c.position }, { "quality", q },
+                              { "message", r.delayValid ? "low coherence: noise in the room or source too quiet" : "no clear arrival: check the mic and the speaker" } });
     }
-    const auto name = g.name + " @ " + state.measure.positions[size_t(j.position)];
-    if (ok) emit("matrix", { { "stage", "captured" }, { "group", group }, { "position", j.position }, { "quality", q }, { "trace", traceVar(r, name) } });
-    else emit("matrix", { { "stage", "rejected" }, { "group", group }, { "position", j.position }, { "quality", q },
-                          { "message", r.delayValid ? "low coherence: noise in the room or source too quiet" : "no clear arrival: check the mic and the speaker" } });
-    j.attempt = 0;
+    if (!allDone) return;
     if (++j.index >= j.groups.size()) { finishMatrix({}); return; }
-    next();
     commit(); // generator moves to the next group
-    emit("matrix", { { "stage", "measuring" }, { "group", j.groups[j.index] }, { "position", j.position } });
+    resetCaptures();
+    for (auto& c : j.captures) emit("matrix", { { "stage", "measuring" }, { "group", j.groups[j.index] }, { "position", c.position } });
 }
 
 void Dispatcher::finishMatrix(const juce::String& error)
 {
     matrixJob.active = false;
-    engine.analyzer().reset();
+    for (int k = 0; k < kMaxMics; ++k)
+        if (auto* an = engine.analyzerForSlot(k)) an->reset();
     commit();
     emit("matrix", { { "stage", error.isEmpty() ? "done" : "error" }, { "message", error } });
 }

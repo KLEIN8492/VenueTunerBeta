@@ -42,9 +42,13 @@ struct GeneratorParams
     uint64_t targets = 0;     // bitmask of outputs
 };
 
+constexpr int kMaxMics = 8; // main measurement mic + 7 more measured simultaneously
+
 struct MeasureParams
 {
     int micInput = -1;          // physical input index, -1 = none
+    int extraMicInputs[kMaxMics - 1] { -1, -1, -1, -1, -1, -1, -1 };
+    int numExtra = 0;           // extra analyzers in use (same reference as the main one)
     RefSource ref = RefSource::Generator;
     int refInput = -1;          // for PhysicalInput / ConsoleInput
 };

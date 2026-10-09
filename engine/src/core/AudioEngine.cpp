@@ -177,6 +177,18 @@ void AudioEngine::prepare(double sr, int block)
     genGain.reset(sr, 0.5); // 500 ms fade in/out
     genGain.setCurrentAndTargetValue(kGenFloor);
     analyzerImpl.requestReset(sr);
+    for (auto& a : extra)
+        if (auto* an = a.load()) an->requestReset(sr);
+}
+
+void AudioEngine::ensureExtraAnalyzers(int count)
+{
+    count = std::clamp(count, 0, kMaxMics - 1);
+    for (int i = int(extraStorage.size()); i < count; ++i) {
+        extraStorage.push_back(std::make_unique<Analyzer>());
+        extraStorage.back()->requestReset(currentSr);
+        extra[size_t(i)].store(extraStorage.back().get(), std::memory_order_release);
+    }
 }
 
 void AudioEngine::audioDeviceStopped() { faultMuted.store(true); }
@@ -285,6 +297,14 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
             ref = (m.refInput >= 0 && m.refInput < numIn && in[m.refInput] != nullptr) ? in[m.refInput] : zeroBuf.data();
         analyzerImpl.pushRef(ref, n);
         analyzerImpl.pushMeas(in[m.micInput], n);
+        // Extra mics: same reference, measured at the same time.
+        for (int k = 0; k < m.numExtra && k < kMaxMics - 1; ++k) {
+            const int ch = m.extraMicInputs[k];
+            auto* an = extra[size_t(k)].load(std::memory_order_acquire);
+            if (an == nullptr || ch < 0 || ch >= numIn || in[ch] == nullptr) continue;
+            an->pushRef(ref, n);
+            an->pushMeas(in[ch], n);
+        }
     }
 }
 

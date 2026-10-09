@@ -27,7 +27,7 @@ export interface SystemState {
   outputs: OutputConfig[];
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
   measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean;
-             positions: string[]; groups: { name: string; outputs: number[] }[] };
+             positions: string[]; positionMics: number[]; groups: { name: string; outputs: number[] }[] };
   air: { enabled: boolean; tempC: number; humidity: number; pressureKPa: number; refTempC: number; refHumidity: number };
   cal: { ioLatency: Record<string, number>; micCalPath: string; splOffset: Record<string, number> };
 }
