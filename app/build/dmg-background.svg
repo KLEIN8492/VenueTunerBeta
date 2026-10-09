@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="420" viewBox="0 0 660 420">
+  <rect width="660" height="420" fill="#161718"/>
+  <text x="330" y="44" fill="#d6d8da" font-family="Menlo, monospace" font-size="17" text-anchor="middle" font-weight="bold">Drag VenueTuner into Applications</text>
+  <path d="M250 190 L400 190" stroke="#4fd1c5" stroke-width="6" stroke-linecap="round"/>
+  <path d="M385 172 L408 190 L385 208" fill="none" stroke="#4fd1c5" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="40" y="292" width="580" height="104" fill="#1d1f21" stroke="#2c2f33"/>
+  <text x="56" y="318" fill="#ffd166" font-family="Menlo, monospace" font-size="13" font-weight="bold">First launch (once):</text>
+  <text x="56" y="342" fill="#d6d8da" font-family="Menlo, monospace" font-size="12">Open VenueTuner. If macOS says it can't verify the developer:</text>
+  <text x="56" y="362" fill="#d6d8da" font-family="Menlo, monospace" font-size="12">System Settings › Privacy &amp; Security › "Open Anyway".</text>
+  <text x="56" y="382" fill="#7c8186" font-family="Menlo, monospace" font-size="12">Then allow microphone access. See "READ ME FIRST" for details.</text>
+</svg>

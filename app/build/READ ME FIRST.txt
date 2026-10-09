@@ -1,0 +1,25 @@
+VenueTuner — installation
+=========================
+
+1. Drag VenueTuner into the Applications folder.
+
+2. First launch (only once per version):
+   VenueTuner is free and not sold through the App Store, so macOS can't
+   verify the developer with Apple. Open it once like this:
+
+   • macOS 15 Sequoia and later:
+     Double-click VenueTuner → click "Done" on the warning →
+     System Settings › Privacy & Security → scroll down →
+     "VenueTuner was blocked…" → Open Anyway → confirm.
+
+   • macOS 13–14:
+     Right-click (or Ctrl-click) VenueTuner in Applications → Open → Open.
+
+   Alternative (Terminal, one line):
+     xattr -dr com.apple.quarantine /Applications/VenueTuner.app
+
+3. When asked, allow microphone access: VenueTuner measures your system
+   through the audio interface and the measurement microphone.
+
+Requirements: macOS 13 Ventura or later, Apple Silicon or Intel.
+Settings, snapshots, presets: ~/Library/Application Support/VenueTuner

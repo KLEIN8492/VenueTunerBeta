@@ -64,7 +64,32 @@
       }
     },
     "dmg": {
-      "title": "VenueTuner ${version}"
+      "title": "VenueTuner ${version}",
+      "background": "build/background.tiff",
+      "iconSize": 88,
+      "window": {
+        "width": 660,
+        "height": 420
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 510,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 590,
+          "y": 72,
+          "type": "file",
+          "path": "build/READ ME FIRST.txt"
+        }
+      ]
     },
     "afterPack": "build/adhoc-sign.js"
   }

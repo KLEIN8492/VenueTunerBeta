@@ -32,11 +32,13 @@ npm run package   # universal engine + UI + Electron → app/dist/
 Produces `app/dist/VenueTuner-<version>-universal.dmg` and `.zip`: one app for Apple Silicon and
 Intel, macOS 13 Ventura or later. Engine and UI are inside the app bundle.
 
-**Installing on another Mac:** open the .dmg and drag VenueTuner to Applications. The app is
-ad-hoc signed, not notarized (that needs a paid Apple Developer account), so the first launch is:
-right-click VenueTuner → **Open** → Open. On recent macOS versions, if there is no Open button:
-System Settings → Privacy & Security → "VenueTuner was blocked" → **Open Anyway**. macOS then asks
-for microphone access once: allow it, or the measurement inputs stay silent.
+**Installing on another Mac:** open the .dmg (its window explains the steps; a "READ ME FIRST"
+file is inside) and drag VenueTuner to Applications. No App Store and no paid account are needed.
+The app is ad-hoc signed but not notarized, so the first launch of each version needs one click:
+System Settings → Privacy & Security → "VenueTuner was blocked" → **Open Anyway** (macOS 13–14:
+right-click → Open). Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/VenueTuner.app`.
+macOS then asks for microphone access once: allow it, or the measurement inputs stay silent.
+An Apple Developer ID ($99/year) would only remove that first-launch step.
 
 Settings, snapshots and calibration live in `~/Library/Application Support/VenueTuner` on each Mac.
 
