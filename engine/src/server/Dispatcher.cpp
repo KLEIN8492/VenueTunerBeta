@@ -414,9 +414,10 @@ juce::var Dispatcher::statusVar()
     set(v, "calibrating", calib.active);
     {
         const auto r = engine.analyzer().spl().reading();
-        const auto [off, cal] = splOffset();
+        const auto [offset, cal] = splOffset();
+        const double off = offset;
         auto spl = object();
-        auto arr3 = [off = off](const std::array<double, 3>& a) {
+        auto arr3 = [off](const std::array<double, 3>& a) {
             juce::Array<juce::var> x;
             for (double d : a) x.add(d > -150 ? d + off : -200.0);
             return juce::var(x);
@@ -638,7 +639,7 @@ void Dispatcher::finishAlign(const juce::String& error)
 
 namespace vt {
 
-bool Dispatcher::replaceState(const SystemState& next, juce::String& err, bool structural)
+bool Dispatcher::replaceState(const SystemState& next, juce::String& err, bool /*structural*/)
 {
     SystemState checked;
     if (!fromVar(toVar(next), checked, err)) return false;

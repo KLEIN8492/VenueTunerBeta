@@ -46,10 +46,17 @@ target_compile_definitions(vt_core PUBLIC
   JUCE_STANDALONE_APPLICATION=1
   JUCE_MODAL_LOOPS_PERMITTED=1
   JUCE_DISPLAY_SPLASH_SCREEN=0)
+# Exact float comparisons in this code are intentional (identity/pass-through filters, change
+# detection of parameters), so -Wfloat-equal from JUCE's strict warning set is only noise.
+# Linked after JUCE's warning flags so it comes later on the command line and wins.
+add_library(vt_warning_tweaks INTERFACE)
+target_compile_options(vt_warning_tweaks INTERFACE -Wno-float-equal)
+
 target_link_libraries(vt_core
   PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags
+    vt_warning_tweaks
   PUBLIC
     juce::juce_core
     juce::juce_events
@@ -58,6 +65,7 @@ target_link_libraries(vt_core
     juce::juce_dsp
     juce::juce_audio_formats
     ixwebsocket)
+
 
 # JUCE modules are compiled into vt_core; expose their headers/defines to dependents.
 target_include_directories(vt_core INTERFACE

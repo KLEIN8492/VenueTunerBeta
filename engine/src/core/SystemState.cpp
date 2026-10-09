@@ -375,10 +375,10 @@ juce::var toVar(const SystemState& s)
     m.getDynamicObject()->setProperty("multiWindow", s.measure.multiWindow);
     juce::Array<juce::var> pos, groups;
     for (auto& p : s.measure.positions) pos.add(p);
-    for (auto& g : s.measure.groups) {
+    for (auto& grp : s.measure.groups) {
         auto x = obj();
-        x.getDynamicObject()->setProperty("name", g.name);
-        x.getDynamicObject()->setProperty("outputs", arr(g.outputs));
+        x.getDynamicObject()->setProperty("name", grp.name);
+        x.getDynamicObject()->setProperty("outputs", arr(grp.outputs));
         groups.add(x);
     }
     m.getDynamicObject()->setProperty("positions", pos);

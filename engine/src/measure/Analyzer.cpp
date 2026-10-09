@@ -364,9 +364,9 @@ void Analyzer::analyseSweep(int64_t len)
     }
     // Room decay from the direct sound onwards (up to 3 s or what was captured).
     {
-        const int len = std::min(int(3.0 * sr), M / 2 - peak);
-        std::vector<float> tail(size_t(std::max(0, len)));
-        for (int i = 0; i < len; ++i) tail[size_t(i)] = ir[(peak + i) % M];
+        const int tailLen = std::min(int(3.0 * sr), M / 2 - peak);
+        std::vector<float> tail(size_t(std::max(0, tailLen)));
+        for (int i = 0; i < tailLen; ++i) tail[size_t(i)] = ir[(peak + i) % M];
         r.decay = roomDecay(tail, sr);
     }
     r.irStart = std::max(0, peak - pre);

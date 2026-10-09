@@ -24,7 +24,7 @@ Server::Server(Dispatcher& d, AudioEngine& e, int port)
         });
     });
     dispatcher.onStateChanged = [this] { sendState(); };
-    dispatcher.onEvent = [this](const juce::var& e) { broadcastText(juce::JSON::toString(e, true)); };
+    dispatcher.onEvent = [this](const juce::var& event) { broadcastText(juce::JSON::toString(event, true)); };
 }
 
 Server::~Server()
