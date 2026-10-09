@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VenueTuner Manual</title>
+<style>
+  :root {
+    --ink: #1c1e21; --dim: #5d636a; --line: #d9dde1; --panel: #f4f6f8; --accent: #0f8f84;
+    --amber: #a66b00; --red: #c4373c; --code: #eef1f4;
+    --mono: "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: #fff; }
+  body { margin: 0; color: var(--ink); font: 15px/1.6 var(--sans); background: #fff; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px 64px; }
+  header.cover { background: #161718; color: #e9ebee; padding: 56px 24px 40px; }
+  header.cover .wrap { padding-bottom: 0; }
+  header.cover h1 { font: 700 40px/1.1 var(--sans); margin: 0 0 8px; letter-spacing: -0.5px; }
+  header.cover p { margin: 4px 0; color: #aab1b8; max-width: 640px; }
+  header.cover .ver { font-family: var(--mono); font-size: 12px; color: #4fd1c5; margin-top: 18px; }
+  nav.toc { background: var(--panel); border: 1px solid var(--line); padding: 14px 20px; margin: 28px 0; }
+  nav.toc ol { margin: 6px 0 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  nav.toc a { color: var(--ink); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); }
+  h2 { font-size: 24px; margin: 48px 0 8px; padding-top: 12px; border-top: 2px solid var(--ink); }
+  h2 .n { font-family: var(--mono); color: var(--accent); margin-right: 8px; }
+  h3 { font-size: 17px; margin: 28px 0 6px; }
+  h4 { font-size: 15px; margin: 18px 0 4px; }
+  p, li { max-width: 72ch; }
+  code, kbd, .mono { font-family: var(--mono); font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; padding: 0 5px; background: #fff; }
+  pre { background: var(--code); padding: 10px 12px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 var(--mono); }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  .note, .warn, .danger { border-left: 4px solid var(--accent); background: #effaf8; padding: 10px 14px; margin: 14px 0; }
+  .warn { border-color: var(--amber); background: #fff7e8; }
+  .danger { border-color: var(--red); background: #fdf0f0; }
+  .note b:first-child, .warn b:first-child, .danger b:first-child { display: block; margin-bottom: 2px; }
+  ol.steps { counter-reset: s; list-style: none; padding-left: 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding-left: 40px; margin: 10px 0; }
+  ol.steps > li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--ink); color: #fff; font: 600 13px/26px var(--sans); text-align: center; }
+  figure { margin: 18px 0; }
+  figcaption { font-size: 13px; color: var(--dim); margin-top: 4px; }
+  svg text { font-family: var(--sans); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } nav.toc ol { columns: 1; } header.cover h1 { font-size: 30px; } }
+  @media print {
+    body { font-size: 11pt; }
+    header.cover { padding: 40px 24px 28px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    h2 { break-before: auto; margin-top: 28px; }
+    h2, h3, h4 { break-after: avoid; }
+    table, figure, .note, .warn, .danger, pre { break-inside: avoid; }
+    nav.toc a::after { content: ""; }
+    a { color: inherit; text-decoration: none; }
+    .note, .warn, .danger, th, nav.toc { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<header class="cover"><div class="wrap">
+  <h1>VenueTuner</h1>
+  <p>System processor and measurement platform for live sound: tune any PA from one Mac and an audio interface.</p>
+  <p>User manual.</p>
+  <div class="ver">Version 0.1 · macOS 13 Ventura or later · Apple Silicon &amp; Intel</div>
+</div></header>
+
+<div class="wrap">
+<nav class="toc"><b>Contents</b>
+  <ol>
+    <li><a href="#what">What VenueTuner is</a></li>
+    <li><a href="#need">What you need</a></li>
+    <li><a href="#install">Installing</a></li>
+    <li><a href="#quick">Quick start: tune a system in 15 steps</a></li>
+    <li><a href="#settings">Settings window</a></li>
+    <li><a href="#live">Live window</a></li>
+    <li><a href="#processing">Processing reference</a></li>
+    <li><a href="#measurement">Measurement window</a></li>
+    <li><a href="#auto">Automatic tuning</a></li>
+    <li><a href="#spl">Sound level, calibration and limits</a></li>
+    <li><a href="#snapshots">Snapshots, presets and undo</a></li>
+    <li><a href="#safety">Safety and live use</a></li>
+    <li><a href="#keys">Keyboard shortcuts</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#files">Files, data and glossary</a></li>
+  </ol>
+</nav>
+
+<h2 id="what"><span class="n">1</span>What VenueTuner is</h2>
+<p>VenueTuner turns a Mac and an audio interface into a <b>loudspeaker system processor</b> with a <b>measurement platform</b> built in. It sits between the mixing console and the amplifiers or powered speakers:</p>
+<figure>
+<svg viewBox="0 0 820 190" width="100%" role="img" aria-label="Signal flow">
+  <defs><marker id="ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1c1e21"/></marker></defs>
+  <rect x="10" y="60" width="120" height="56" fill="#f4f6f8" stroke="#1c1e21"/><text x="70" y="93" text-anchor="middle" font-size="14">Console</text>
+  <rect x="190" y="30" width="430" height="120" fill="#fff" stroke="#0f8f84" stroke-width="2"/>
+  <text x="405" y="52" text-anchor="middle" font-size="14" font-weight="700" fill="#0f8f84">VenueTuner (Mac + audio interface)</text>
+  <rect x="210" y="66" width="90" height="40" fill="#f4f6f8" stroke="#5d636a"/><text x="255" y="91" text-anchor="middle" font-size="12">Inputs</text>
+  <rect x="320" y="66" width="90" height="40" fill="#f4f6f8" stroke="#5d636a"/><text x="365" y="85" text-anchor="middle" font-size="12">Routing</text><text x="365" y="99" text-anchor="middle" font-size="10" fill="#5d636a">"fed by"</text>
+  <rect x="426" y="66" width="184" height="40" fill="#f4f6f8" stroke="#5d636a"/><text x="518" y="85" text-anchor="middle" font-size="12">Output processing</text><text x="518" y="99" text-anchor="middle" font-size="9" fill="#5d636a">gain·delay·EQ·XO·AP·FIR·limiter</text>
+  <rect x="210" y="116" width="390" height="24" fill="#effaf8" stroke="#0f8f84"/><text x="405" y="133" text-anchor="middle" font-size="11">Measurement: pink noise / sweep → mic → transfer function, delay, SPL</text>
+  <rect x="680" y="34" width="130" height="40" fill="#f4f6f8" stroke="#1c1e21"/><text x="745" y="59" text-anchor="middle" font-size="13">Amps / speakers</text>
+  <rect x="680" y="110" width="130" height="40" fill="#f4f6f8" stroke="#1c1e21"/><text x="745" y="135" text-anchor="middle" font-size="13">Measurement mic</text>
+  <line x1="130" y1="88" x2="208" y2="88" stroke="#1c1e21" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="300" y1="86" x2="318" y2="86" stroke="#1c1e21" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="410" y1="86" x2="428" y2="86" stroke="#1c1e21" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="620" y1="66" x2="678" y2="56" stroke="#1c1e21" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="678" y1="130" x2="622" y2="130" stroke="#1c1e21" stroke-width="2" marker-end="url(#ar)"/>
+</svg>
+<figcaption>The console feeds VenueTuner; each output is processed and sent to its amplifier. A measurement mic lets you see and correct what the system and the room do.</figcaption>
+</figure>
+<ul>
+  <li><b>Processing</b>: you create only the inputs and outputs you need. Each output has gain, polarity, delay, 16-band parametric EQ, high/low-pass crossovers, all-pass filters, an FIR filter and a limiter.</li>
+  <li><b>Measurement</b>: a dual-channel analyzer (transfer function, phase, coherence, impulse response), RTA, log sweeps, sound level in dB SPL, room reverberation (RT60).</li>
+  <li><b>Automatic tuning</b>: sequenced measurements over several mic positions, automatic delay alignment, sub/top phase alignment, automatic EQ. Every automatic result is written as normal, editable settings.</li>
+  <li><b>Live use</b>: snapshots, undo, speaker presets, air-absorption compensation, sound level against the French 2017 limits.</li>
+</ul>
+<p>It works with any loudspeaker brand: you build your own speaker presets (crossover, EQ, FIR) or import the FIR files a manufacturer publishes.</p>
+
+<h2 id="need"><span class="n">2</span>What you need</h2>
+<table>
+  <tr><th>Item</th><th>Recommendation</th></tr>
+  <tr><td>Mac</td><td>macOS 13 Ventura or later, Apple Silicon or Intel. A dedicated machine is best for shows.</td></tr>
+  <tr><td>Audio interface</td><td>A wired USB or Thunderbolt interface (Core Audio, class compliant). Enough inputs for the console feed(s) and measurement mic(s), enough outputs for your speaker feeds. Network audio (Dante, AVB) is not supported in this version.</td></tr>
+  <tr><td>Measurement mic</td><td>An omnidirectional measurement microphone with 48 V phantom power, ideally with its calibration file. Optional: an acoustic calibrator (94 dB) for accurate SPL.</td></tr>
+  <tr><td>Cables</td><td>Console outputs → interface inputs; interface outputs → amplifiers or powered speakers. Optional: a short cable from one output to one input to calibrate the interface latency.</td></tr>
+</table>
+<div class="warn"><b>The Mac's built-in microphone and speakers</b>
+They work for trying the software, but Apple's processing adds about 45 ms of latency and changes the frequency response. Use them to learn the software, not to tune a system.</div>
+
+<h2 id="install"><span class="n">3</span>Installing</h2>
+<ol class="steps">
+  <li>Open <code>VenueTuner-0.1.0-universal.dmg</code> and drag <b>VenueTuner</b> onto <b>Applications</b>.</li>
+  <li><b>First launch (once per version).</b> VenueTuner isn't distributed through the App Store, so macOS asks you to confirm:
+    <ul>
+      <li><b>macOS 15 Sequoia and later</b>: double-click VenueTuner and click <i>Done</i> on the warning. Open <b>System Settings › Privacy &amp; Security</b>, scroll down to "VenueTuner was blocked", click <b>Open Anyway</b> and confirm.</li>
+      <li><b>macOS 13–14</b>: right-click (or Ctrl-click) VenueTuner in Applications → <b>Open</b> → <b>Open</b>.</li>
+      <li>Alternative, in Terminal: <code>xattr -dr com.apple.quarantine /Applications/VenueTuner.app</code></li>
+    </ul></li>
+  <li>When macOS asks for <b>microphone access</b>, allow it. Without it the measurement inputs stay silent.</li>
+</ol>
+<p>Two windows open: <b>Measurement</b> (top) and <b>Live</b> (bottom). <b>Settings</b> opens with <kbd>⌘</kbd><kbd>,</kbd>. The windows remember their position.</p>
+
+<h2 id="quick"><span class="n">4</span>Quick start: tune a system in 15 steps</h2>
+<div class="note"><b>Before you start</b>
+VenueTuner always starts with <b>all outputs muted</b>, and they stay muted until you unmute them. Turn the amplifiers on last and keep them low until the patch is checked.</div>
+<ol class="steps">
+  <li><b>Choose the interface</b>: <kbd>⌘</kbd><kbd>,</kbd> › <b>Audio</b>: pick the output and input device, 48000 Hz and a buffer of 64 (or 128 if you hear dropouts), then <b>Apply</b>.</li>
+  <li><b>Create your inputs</b>: Settings › <b>Inputs</b> › <b>+ Input</b> for each console feed (e.g. "Console L" on interface input 1, "Console R" on input 2), and <b>+ Measurement mic</b> for each mic. Turn on phantom power on the interface for the mic.</li>
+  <li><b>Create your outputs</b>: Settings › <b>Outputs</b>: <b>+ Stereo pair</b>, <b>+ Sub</b>, <b>+ Output</b> for fills and delays. Pick each output's interface channel, and under <b>fed by</b> choose which inputs feed it.</li>
+  <li><b>Unmute</b>: in the Live window (<kbd>⌘</kbd><kbd>2</kbd>), check the levels, then <b>Unmute outputs</b> in the red banner.</li>
+  <li><b>Choose the mic</b>: Measurement (<kbd>⌘</kbd><kbd>1</kbd>) › Measure tab › <b>Mic</b>. Keep <b>Reference</b> on <i>Internal loopback</i>.</li>
+  <li><b>Pink noise</b>: under Generator, light the output(s) to measure, set the level low (−40 dBFS), press <b>G</b> and bring the level up slowly.</li>
+  <li><b>Set the mic gain</b>: in <b>Mic gain vs reference</b>, adjust the interface's mic preamp until the hint says <i>✓ matched</i>.</li>
+  <li><b>Calibrate the level</b> (recommended): <b>Calibrate…</b> next to the SPL value; see <a href="#spl">section 10</a>.</li>
+  <li><b>Look at the response</b>: the magnitude, phase and coherence plots fill in after a few seconds. Faded parts have low coherence and can't be trusted.</li>
+  <li><b>Define the measurement plan</b>: <b>Matrix</b> tab: <b>One per output</b> creates a group per output; add mic positions (FOH, front, balcony…).</li>
+  <li><b>Measure</b>: put the mic at the first position and press <b>▶</b> in its column. Each group plays alone and is captured and checked. Move the mic and repeat.</li>
+  <li><b>Align the timing</b>: <b>Align</b> tab: <i>Auto-align</i> for tops, fills and delays; <i>Sub ↔ top phase alignment</i> for the crossover.</li>
+  <li><b>EQ</b>: in the Matrix tab press <b>avg</b> for a group, then the <b>Auto-EQ</b> tab, <b>Compute</b> and <b>Apply</b>. Or edit by hand in the Live window's EQ editor.</li>
+  <li><b>Check</b>: measure again; play music and listen.</li>
+  <li><b>Save</b>: Live window › Snapshots › name › <b>Save</b>. Save speaker presets for reuse (<a href="#snapshots">section 11</a>).</li>
+</ol>
+
+<h2 id="settings"><span class="n">5</span>Settings window <span class="mono" style="font-size:14px;color:var(--dim)">⌘,</span></h2>
+<h3>Audio</h3>
+<p>Interface (output and input device), sample rate and buffer size. Smaller buffers mean less latency but more risk of dropouts (XRUN in the status bar). Changing the interface mutes all outputs.</p>
+<p><b>Where the latency comes from</b> lists the latency of each direction: device, safety offset, stream (hardware DSP), and VenueTuner's own buffer. Pro interfaces usually total 2–6 ms round trip at a buffer of 64.</p>
+<h3>Inputs</h3>
+<p>Create only the inputs you use. Each has a name, a type and an interface channel:</p>
+<table>
+  <tr><th>Type</th><th>Use</th></tr>
+  <tr><td>program</td><td>Sound to process (console feeds). Only program inputs can feed outputs.</td></tr>
+  <tr><td>measurement mic</td><td>Measurement only. <b>Never</b> sent to the speakers, even if you try to route it.</td></tr>
+  <tr><td>loopback</td><td>A physical reference (an output cabled back to an input), for the most exact measurements.</td></tr>
+</table>
+<h3>Outputs</h3>
+<p>One output per speaker feed: name, colour, type, interface channel and <b>fed by</b> (which inputs, at which level in dB). Presets: <i>Stereo pair</i> (L/R from the first two program inputs) and <i>Sub</i> (L+R at −6 dB each, low-pass LR24 at 100 Hz). ↑↓ reorder, ⧉ duplicates an output with its processing, × deletes it. A channel used by another output can't be picked twice.</p>
+<h3>Calibration</h3>
+<p><b>Interface latency</b>: the latency the driver reports is used automatically. For precision, cable an output to an input and press <b>Calibrate</b> (do it once per interface, sample rate and buffer). <b>Measurement microphone calibration file</b>: load the mic's .cal / .txt file to correct its frequency response.</p>
+
+<h2 id="live"><span class="n">6</span>Live window <span class="mono" style="font-size:14px;color:var(--dim)">⌘2</span></h2>
+<h3>Toolbar</h3>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><b>MUTE ALL</b></td><td>Silences every output immediately. Click again to unmute.</td></tr>
+  <tr><td>SPL reading</td><td>The main mic's level (e.g. <i>LAS 95.0 dB</i>). "≈ … uncal." means it's an estimate; click to calibrate.</td></tr>
+  <tr><td>LAeq 15′ / LCeq 15′</td><td>Levels over the last 15 minutes against the limits (France 2017 by default): normal, <span style="color:var(--amber)">amber</span> within 3 dB, <span style="color:var(--red)">red</span> over. Click to change the limits.</td></tr>
+  <tr><td>AIR</td><td>Air-absorption compensation (<a href="#processing">section 7</a>).</td></tr>
+  <tr><td>↶ ↷</td><td>Undo / redo (<kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd>).</td></tr>
+</table>
+<h3>Output strips</h3>
+<p>One strip per output you created: name, interface channel (and preset), output meter, limiter gain-reduction meter, <b>Mute</b>, <b>Ø</b> (polarity), gain, delay, limiter on/off, threshold and release, and the total latency of that output. Hold <kbd>⇧</kbd> while changing a value to apply it to all selected strips; <kbd>⌘</kbd>-click names to select several.</p>
+<h3>EQ editor</h3>
+<p>Click a strip's name to open its filters under the strips:</p>
+<ul>
+  <li><b>Graph</b>: the white curve is the output's total filter response. Drag a numbered handle to move a band (frequency and gain), scroll on it to change Q, double-click an empty spot to add a bell, <kbd>⌥</kbd>-click a handle to delete it. HP / LP / A1… handles move crossovers and all-pass filters.</li>
+  <li><b>Live TF</b>: the current measurement, level-matched to the curve.</li>
+  <li><b>Base</b> + <b>predicted</b>: choose a captured trace; the yellow curve predicts the response after your changes without measuring again.</li>
+  <li><b>link</b>: apply edits to all selected strips (e.g. L and R together).</li>
+  <li>Panels for PEQ (16 bands), crossover, all-pass (4), air distance, FIR, and speaker presets.</li>
+</ul>
+<h3>Fault banner</h3>
+<p>The red <i>OUTPUTS MUTED</i> banner appears at start-up, after an interface change or disconnect, and after the audio engine restarts. Nothing plays until you press <b>Unmute outputs</b>.</p>
+
+<h2 id="processing"><span class="n">7</span>Processing reference</h2>
+<p>Each output processes its signal in this fixed order:</p>
+<pre>fed by (input mix) → gain · polarity → delay → PEQ ×16 → high-pass → low-pass → all-pass ×4 → air shelf → FIR → limiter → mute → interface channel</pre>
+<table>
+  <tr><th>Block</th><th>Details</th><th>Latency</th></tr>
+  <tr><td>Gain / polarity / mute</td><td>−80…+12 dB; changes ramp over 20 ms (no clicks)</td><td>0</td></tr>
+  <tr><td>Delay</td><td>0–1000 ms; changes crossfade over 50 ms</td><td>as set</td></tr>
+  <tr><td>PEQ</td><td>16 bands: bell, low/high shelf, notch, low/high-pass 12 dB; 10 Hz–24 kHz, −30…+15 dB, Q 0.1–30</td><td>0</td></tr>
+  <tr><td>Crossover</td><td>Butterworth 6/12/18/24/36/48 and Linkwitz-Riley 12/24/48 dB/oct</td><td>0</td></tr>
+  <tr><td>All-pass</td><td>1st or 2nd order (frequency, Q): phase only, for alignment</td><td>0</td></tr>
+  <tr><td>Air shelf</td><td>Automatic high shelf from the air conditions (see below)</td><td>0</td></tr>
+  <tr><td>FIR</td><td>WAV or text coefficients (up to 65 536 taps); on/off crossfades</td><td>the filter's own (shown)</td></tr>
+  <tr><td>Limiter</td><td>Peak limiter, threshold −40…0 dBFS, no look-ahead</td><td>0</td></tr>
+</table>
+<p>IIR filters add no latency; a linear-phase FIR adds half its length (shown on the strip). Filter changes ramp smoothly, so you can adjust EQ during a show.</p>
+<h3>Air-absorption compensation (AIR)</h3>
+<p>Air absorbs high frequencies, more over distance and depending on temperature and humidity (ISO 9613-1). Enter the temperature and humidity in the toolbar, press <b>Tuned now</b> when you've tuned the system, and give each output its <b>distance</b> to its audience (EQ editor). When the air changes, VenueTuner adds a high shelf that restores what the air now takes away (up to +9 dB).</p>
+
+<h2 id="measurement"><span class="n">8</span>Measurement window <span class="mono" style="font-size:14px;color:var(--dim)">⌘1</span></h2>
+<h3>Plots</h3>
+<div class="two">
+<div><b>Magnitude</b>: level difference between what the mic hears and the reference, per frequency. Scroll to move the range, double-click to reset.<br>
+<b>Phase</b>: timing per frequency, with the arrival time removed.</div>
+<div><b>Coherence</b>: how much of what the mic hears comes from the system (1 = all). Points below 0.4 are hidden; up to 0.8 they fade.<br>
+<b>Impulse response</b>: the arrival in time; the dashed line marks the detected delay.</div>
+</div>
+<h3>Measure tab</h3>
+<ul>
+  <li><b>Sound level</b>, <b>Mic gain vs reference</b>: see <a href="#spl">section 10</a>.</li>
+  <li><b>View</b>: <i>Transfer fn</i> or <i>RTA</i> (real-time spectrum of the mic in 1/3 or 1/6 octave; works on music, no generator needed).</li>
+  <li><b>Generator</b>: pink noise on the selected outputs; level in dBFS RMS (maximum −12).</li>
+  <li><b>Mic / Reference</b>: the main measurement mic; the reference is the internal loopback (the generator signal, interface latency compensated) or a physical input.</li>
+  <li><b>Average</b> (frames), <b>Smoothing</b> (none to 1/3 octave), <b>FFT</b>: <i>multi-time-window</i> (long windows in the lows, short in the highs, which hides late reflections) or <i>fixed 16k</i>.</li>
+  <li><b>Log sweep</b> (<kbd>S</kbd>): a 1–8 s sweep for a high-resolution measurement and the room's reverberation.</li>
+  <li><b>Delay finder</b>: arrival time in ms and metres. <i>Store as reference arrival</i>, then measure another speaker and <i>Align to ref</i>.</li>
+  <li><b>Traces</b>: <b>Capture</b> (<kbd>C</kbd>), show/hide, rename (double-click), average, <b>Import…</b> (REW, Smaart or VenueTuner text exports), <b>Export</b>.</li>
+</ul>
+<h3>Matrix tab: sequenced measurements</h3>
+<p><b>Groups</b> are outputs played together (e.g. "Subs" = outputs 3 + 4); <i>One per output</i> creates them for you. <b>Positions</b> are where the mic goes.</p>
+<ul>
+  <li><b>One mic</b>: place it, press <b>▶</b> in that position's column. Each group plays alone and is captured once its arrival is stable and averaged. A capture with low coherence (talking, a door) is retried once, then marked ✗. Move the mic and repeat.</li>
+  <li><b>Several mics</b>: give each position its own mic and press <b>▶ All positions with a mic</b>: every position is captured at once from the same noise (up to 8 mics).</li>
+  <li>Click a cell to re-measure it. <b>avg</b> averages a group over all positions and shows it alone, ready for Auto-EQ.</li>
+</ul>
+<h3>Room tab</h3>
+<p>After a log sweep: EDT, T20 and T30 per octave (63 Hz–8 kHz) and the decay curves. Use a quiet room and a 3 s sweep or longer.</p>
+
+<h2 id="auto"><span class="n">9</span>Automatic tuning</h2>
+<p>All automatic tools write <b>normal settings</b> you can see and edit, and save a <b>"Before…" snapshot</b> first, so you can always go back.</p>
+<h3>Auto-EQ</h3>
+<ol class="steps">
+  <li>Measure the output alone (generator on that output only) at one or more positions, and keep those traces visible (or use <b>avg</b> in the Matrix).</li>
+  <li>Auto-EQ tab: choose the output, the target (flat, tilt, or house curve with LF lift and HF roll-off), the range (it follows the crossover) and the number of bands.</li>
+  <li><b>Compute</b>: grey = now, yellow = predicted. <b>Apply</b> replaces that output's PEQ.</li>
+</ol>
+<p>Rules: it prefers cuts; the combined boost never exceeds +3 dB (adjustable); narrow, deep dips are left alone (they are cancellations that EQ can't fix); low-coherence regions are ignored.</p>
+<h3>Auto delay alignment</h3>
+<p>Align tab: choose the outputs and the reference (latest arrival or one output). Each output plays alone; delays are set so they all arrive together. Best for tops, fills and delay speakers.</p>
+<h3>Sub ↔ top phase alignment</h3>
+<p>Capture the top alone and the sub alone from the same mic position. Compute searches the delay <b>and polarity</b> that give the strongest sum around the crossover (using phase, not just the impulse peak) and shows the summed response before and after.</p>
+
+<h2 id="spl"><span class="n">10</span>Sound level, calibration and limits</h2>
+<h3>Readings</h3>
+<table>
+  <tr><th>Setting</th><th>Options</th></tr>
+  <tr><td>Frequency weighting</td><td>A (hearing, legal limits), C (includes low end, legal limits), Z (flat)</td></tr>
+  <tr><td>Time weighting</td><td>Fast 125 ms, Slow 1 s, Impulse 35 ms</td></tr>
+  <tr><td>Refresh</td><td>1, 2, 5 or 10 times per second (display only; the measurement itself doesn't change)</td></tr>
+  <tr><td>Leq</td><td>Equivalent level over 1 s, 10 s, 1 min, 5 min, 15 min, or since reset (↺)</td></tr>
+  <tr><td>Also shown</td><td>LCpeak, maximum Fast level, time since reset, and the mic level in dBFS</td></tr>
+</table>
+<h3>Calibrating</h3>
+<p>Until a mic is calibrated, levels are an <b>estimate</b> (shown with ≈, about ±10 dB), assuming a typical mic and gain. <b>Calibrate…</b> offers three methods:</p>
+<table>
+  <tr><th>Method</th><th>How</th><th>Accuracy</th></tr>
+  <tr><td>1 · Calibrator</td><td>Put a 94 dB (or 114 dB) calibrator on the mic, press Calibrate</td><td>Best</td></tr>
+  <tr><td>2 · Reference meter</td><td>Play pink noise, type what an SPL meter or Smaart reads (Slow, its weighting), press Match</td><td>As good as the reference</td></tr>
+  <tr><td>3 · Datasheets</td><td>Mic sensitivity (mV/Pa), interface level at 0 dBFS (dBu), preamp gain</td><td>Estimate, ±3 dB</td></tr>
+</table>
+<div class="warn"><b>Calibration follows the gain knob</b>
+A calibration is valid only at the mic preamp gain it was made at. If you turn the gain, calibrate again. Calibrations are stored per mic name.</div>
+<h3>Mic gain vs reference</h3>
+<p>The REF and MIC meters compare the reference (generator / loopback) and the mic. Adjust the interface's mic preamp until the hint shows <i>✓ matched</i> (within about 6 dB). This gives clean, well-scaled transfer functions.</p>
+<h3>Limits (France, décret 2017-1244)</h3>
+<p>LAeq over 15 minutes ≤ <b>102 dB(A)</b> and LCeq over 15 minutes ≤ <b>118 dB(C)</b>; for events aimed at children under 6: 94 dB(A) / 104 dB(C). Click the limits in the Live toolbar to switch preset, enter custom values or turn them off. VenueTuner <b>displays</b> the levels; it doesn't limit the audio. Use the output limiters and your own judgement to stay within the law.</p>
+
+<h2 id="snapshots"><span class="n">11</span>Snapshots, presets and undo</h2>
+<table>
+  <tr><th></th><th>Contains</th><th>Use</th></tr>
+  <tr><td><b>Snapshot</b></td><td>Inputs, outputs, channels, routing and all processing</td><td>A whole show or venue. <b>Recall</b> crossfades; <b>A/B</b> toggles two snapshots; export/import as files. On another interface you are asked which channels to use.</td></tr>
+  <tr><td><b>Speaker preset</b></td><td>Crossover, PEQ, all-pass, limiter, polarity, level and FIR (embedded) of one output</td><td>A type of speaker. <b>Apply</b> to outputs; delay, routing and channel stay. Export/import <code>.vtpreset</code> files to share.</td></tr>
+  <tr><td><b>Undo</b></td><td>Every change to inputs, outputs and processing (last 100)</td><td><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd>; a drag counts as one step. The generator and measurement settings are not undone.</td></tr>
+</table>
+
+<h2 id="safety"><span class="n">12</span>Safety and live use</h2>
+<ul>
+  <li>Outputs start <b>muted</b> after launch, after an interface change or disconnect, and after an engine restart.</li>
+  <li><b>MUTE ALL</b> acts within one audio block.</li>
+  <li>The generator starts at −40 dBFS, fades in and out, and can't exceed −12 dBFS RMS. After a restart it is always off.</li>
+  <li>Measurement mics are never routed to outputs.</li>
+  <li>Gain, polarity, EQ and delay changes ramp or crossfade; FIR on/off crossfades. Adding, removing or reordering outputs during a show can still glitch: do patch changes before the show.</li>
+  <li>If the user interface closes or crashes, the audio keeps running; the app restarts the engine if it stops (outputs muted).</li>
+  <li>Use a dedicated Mac for shows. Other audio drivers (virtual soundcards, network audio drivers) can stall macOS audio for every application when they misbehave.</li>
+</ul>
+<div class="danger"><b>Protect the speakers</b>
+Set limiter thresholds and crossovers before raising amplifier levels. Pink noise and sweeps can be loud: start low and wear hearing protection near the speakers.</div>
+
+<h2 id="keys"><span class="n">13</span>Keyboard shortcuts</h2>
+<table>
+  <tr><th>Keys</th><th>Action</th></tr>
+  <tr><td><kbd>⌘</kbd><kbd>1</kbd> · <kbd>⌘</kbd><kbd>2</kbd> · <kbd>⌘</kbd><kbd>,</kbd></td><td>Measurement · Live · Settings</td></tr>
+  <tr><td><kbd>⌘</kbd><kbd>Z</kbd> · <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></td><td>Undo · redo</td></tr>
+  <tr><td><kbd>G</kbd> · <kbd>C</kbd> · <kbd>R</kbd> · <kbd>S</kbd></td><td>(Measurement) generator on/off · capture trace · reset averaging · log sweep</td></tr>
+  <tr><td><kbd>⇧</kbd> + value change</td><td>(Live) apply to all selected strips</td></tr>
+  <tr><td>Drag · scroll · double-click · <kbd>⌥</kbd>-click</td><td>(EQ graph) move band · Q · add band · delete band</td></tr>
+</table>
+
+<h2 id="trouble"><span class="n">14</span>Troubleshooting</h2>
+<table>
+  <tr><th>Symptom</th><th>Check</th></tr>
+  <tr><td>"○ NO AUDIO" in the status bar</td><td>The interface isn't running: reconnect it, pick it again in Settings › Audio, or quit other apps holding it. If several apps stall at once, restart virtual / network soundcard drivers or the Mac.</td></tr>
+  <tr><td>Nothing comes out</td><td>Red banner → <b>Unmute outputs</b>; MUTE ALL; the output's Mute; the output's interface channel; <b>fed by</b> in Settings › Outputs; the input type is <i>program</i>.</td></tr>
+  <tr><td>"No clear arrival" / no measurement</td><td>Generator on and on the right output; the mic selected and patched; phantom power; mic gain (see <i>Mic gain vs reference</i>).</td></tr>
+  <tr><td>Low coherence, jagged traces</td><td>Too much noise in the room or the level is too low: raise the generator, average more, use the multi-time-window FFT, or move the mic away from reflective surfaces.</td></tr>
+  <tr><td>Clicks or dropouts (XRUN rising)</td><td>Use a larger buffer (128 or 256), close other apps, bypass FIR filters on unused outputs.</td></tr>
+  <tr><td>High latency</td><td>Settings › Audio › <i>Where the latency comes from</i>: if most of it is "stream (hardware DSP)", it's the device itself (e.g. built-in Mac devices); use a pro interface.</td></tr>
+  <tr><td>"Outputs on channels this interface doesn't have"</td><td>The interface changed: re-patch those outputs/inputs in Settings.</td></tr>
+  <tr><td>SPL looks wrong</td><td>Calibrate (section 10); recalibrate after changing the mic gain.</td></tr>
+  <tr><td>macOS refuses to open the app</td><td>See <a href="#install">section 3</a> (Open Anyway).</td></tr>
+</table>
+
+<h2 id="files"><span class="n">15</span>Files, data and glossary</h2>
+<p>Settings, snapshots, speaker presets and calibrations are stored per Mac in <code>~/Library/Application Support/VenueTuner</code>. They are saved automatically (every change, and on quit). Snapshots (<code>.json</code>) and presets (<code>.vtpreset</code>) can be exported and shared.</p>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td>Transfer function (TF)</td><td>What the system does to the signal: the ratio of the mic signal to the reference, per frequency (magnitude and phase).</td></tr>
+  <tr><td>Coherence</td><td>0–1: how much of the mic signal is explained by the reference. Low = noise, reflections or too little level.</td></tr>
+  <tr><td>Internal loopback</td><td>The generator signal used directly as the reference, inside the software; the interface latency is compensated.</td></tr>
+  <tr><td>Linkwitz-Riley (LR)</td><td>Crossover filters whose low and high parts sum flat when aligned.</td></tr>
+  <tr><td>All-pass</td><td>A filter that changes phase without changing level; used to align a sub and a top at the crossover.</td></tr>
+  <tr><td>FIR</td><td>A filter defined by its impulse response (coefficients): can correct phase and magnitude independently; may add latency.</td></tr>
+  <tr><td>LAeq / LCeq</td><td>Equivalent continuous sound level, A- or C-weighted, over a period (e.g. 15 min).</td></tr>
+  <tr><td>RT60 (T20, T30, EDT)</td><td>Time for sound to decay by 60 dB in the room, estimated from part of the decay.</td></tr>
+  <tr><td>dBFS / dB SPL</td><td>Level relative to the interface's maximum / acoustic level in the room (needs calibration).</td></tr>
+</table>
+<p class="mono" style="color:var(--dim);margin-top:32px">VenueTuner 0.1 · This manual describes the software-only version for macOS.</p>
+</div>
+</body>
+</html>

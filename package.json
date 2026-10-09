@@ -9,6 +9,7 @@
     "test": "engine/build/vt_tests && npm --prefix ui test",
     "app": "npm run build:ui && npm --prefix app start",
     "build:engine:universal": "cmake -S engine -B engine/build-universal -DCMAKE_BUILD_TYPE=Release \"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64\" && cmake --build engine/build-universal -j 10 --target VenueTunerEngine",
-    "package": "npm run build:engine:universal && npm run build:ui && npm --prefix app run dist"
+    "package": "npm run build:engine:universal && npm run build:ui && npm run manual && npm --prefix app run dist",
+    "manual": "app/node_modules/.bin/electron scripts/html-to-pdf \"$PWD/docs/manual/VenueTuner-Manual.html\" \"$PWD/docs/manual/VenueTuner-Manual.pdf\""
   }
 }

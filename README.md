@@ -30,7 +30,11 @@ npm run package   # universal engine + UI + Electron → app/dist/
 ```
 
 Produces `app/dist/VenueTuner-<version>-universal.dmg` and `.zip`: one app for Apple Silicon and
-Intel, macOS 13 Ventura or later. Engine and UI are inside the app bundle.
+Intel, macOS 13 Ventura or later. Engine and UI are inside the app bundle; the dmg also contains
+the manual (PDF) and a READ ME FIRST file. Send the **.dmg** to testers.
+
+The manual is `docs/manual/VenueTuner-Manual.html`; `npm run manual` regenerates the PDF
+(`npm run package` does it automatically).
 
 **Installing on another Mac:** open the .dmg (its window explains the steps; a "READ ME FIRST"
 file is inside) and drag VenueTuner to Applications. No App Store and no paid account are needed.

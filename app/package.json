@@ -88,6 +88,12 @@
           "y": 72,
           "type": "file",
           "path": "build/READ ME FIRST.txt"
+        },
+        {
+          "x": 70,
+          "y": 72,
+          "type": "file",
+          "path": "../docs/manual/VenueTuner-Manual.pdf"
         }
       ]
     },
