@@ -121,18 +121,39 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd.startsWith("preset.")) return presetCommand(cmd, args, err);
     if (cmd == "matrix.cancel") { if (matrixJob.active) finishMatrix("cancelled"); return true; }
 
+    // Calibrate the main mic: with a calibrator (Z, 1 kHz tone) or by matching what a reference
+    // meter shows (in that meter's weighting: 0 Z, 1 A, 2 C; Slow).
     if (cmd == "spl.calibrate") {
         const int mic = state.measure.micSource;
         if (mic < 0) { err = "choose the measurement mic first"; return {}; }
         const double level = args.hasProperty("level") ? double(args["level"]) : 94.0;
+        const int w = args.hasProperty("weighting") ? std::clamp(int(args["weighting"]), 0, 2) : 0;
+        const auto method = args["method"].toString() == "reference" ? juce::String("reference") : juce::String("calibrator");
         const auto r = engine.analyzer().spl().reading();
-        if (r.slow[0] < -100) { err = "no signal on the mic: put the calibrator on it"; return {}; }
-        state.cal.splOffset[state.sources[size_t(mic)].name] = level - r.slow[0];
+        if (r.slow[size_t(w)] < -100) { err = method == "calibrator" ? "no signal on the mic: put the calibrator on it" : "no signal on the mic"; return {}; }
+        const auto& name = state.sources[size_t(mic)].name;
+        state.cal.splOffset[name] = level - r.slow[size_t(w)];
+        state.cal.splMethod[name] = method;
         commit();
-        return state.cal.splOffset[state.sources[size_t(mic)].name];
+        return state.cal.splOffset[name];
+    }
+    // Offset computed from datasheet values (mic sensitivity, interface level, gain): an estimate.
+    if (cmd == "spl.setOffset") {
+        const int mic = state.measure.micSource;
+        if (mic < 0) { err = "choose the measurement mic first"; return {}; }
+        const double off = double(args["offsetDb"]);
+        if (!std::isfinite(off) || off < 40 || off > 200) { err = "offset out of range"; return {}; }
+        const auto& name = state.sources[size_t(mic)].name;
+        state.cal.splOffset[name] = off;
+        state.cal.splMethod[name] = "estimate";
+        commit();
+        return off;
     }
     if (cmd == "spl.clearCal") {
-        if (state.measure.micSource >= 0) state.cal.splOffset.erase(state.sources[size_t(state.measure.micSource)].name);
+        if (state.measure.micSource >= 0) {
+            state.cal.splOffset.erase(state.sources[size_t(state.measure.micSource)].name);
+            state.cal.splMethod.erase(state.sources[size_t(state.measure.micSource)].name);
+        }
         commit();
         return true;
     }
@@ -424,11 +445,24 @@ juce::var Dispatcher::statusVar()
         };
         set(spl, "fast", arr3(r.fast));
         set(spl, "slow", arr3(r.slow));
+        set(spl, "impulse", arr3(r.impulse));
         set(spl, "leq", arr3(r.leq));
+        set(spl, "max", arr3(r.maxFast));
+        juce::Array<juce::var> wins;
+        for (auto& w : r.leqWindow) wins.add(arr3(w));
+        set(spl, "leqWindows", wins); // 1 s, 10 s, 1 min, 5 min, 15 min
         set(spl, "peak", r.peakZ > -150 ? r.peakZ + off : -200.0);
+        set(spl, "cPeak", r.cPeak > -150 ? r.cPeak + off : -200.0);
         set(spl, "leqSeconds", r.leqSeconds);
         set(spl, "calibrated", cal);
+        set(spl, "method", splCal().method);
+        set(spl, "offset", off);
+        set(spl, "micDbfs", r.slow[0]);
         set(v, "spl", spl);
+        auto lv = object();
+        set(lv, "ref", engine.analyzer().refLevelDb());
+        set(lv, "mic", engine.analyzer().micLevelDb());
+        set(v, "levels", lv);
     }
     set(v, "sweeping", sweepJob.active);
     set(v, "canUndo", int(undoStack.size()));
@@ -815,12 +849,15 @@ juce::var Dispatcher::recallSnapshot(const juce::var& args, juce::String& err)
 
 namespace vt {
 
-std::pair<double, bool> Dispatcher::splOffset() const
+Dispatcher::SplCal Dispatcher::splCal() const
 {
     const int mic = state.measure.micSource;
-    if (mic < 0 || mic >= int(state.sources.size())) return { 0.0, false };
-    auto it = state.cal.splOffset.find(state.sources[size_t(mic)].name);
-    return it == state.cal.splOffset.end() ? std::pair { 0.0, false } : std::pair { it->second, true };
+    if (mic < 0 || mic >= int(state.sources.size())) return { kDefaultSplOffset, "default" };
+    const auto& name = state.sources[size_t(mic)].name;
+    auto it = state.cal.splOffset.find(name);
+    if (it == state.cal.splOffset.end()) return { kDefaultSplOffset, "default" };
+    auto m = state.cal.splMethod.find(name);
+    return { it->second, m == state.cal.splMethod.end() ? juce::String("calibrator") : m->second };
 }
 
 } // namespace vt

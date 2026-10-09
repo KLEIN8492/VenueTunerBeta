@@ -100,6 +100,14 @@ struct MeasureConfig
     bool multiWindow = true;
 };
 
+// Sound level limits shown in the Live window (France, décret 2017-1244: 102 dB(A) / 118 dB(C)
+// over 15 minutes; 94 / 104 for events aimed at children under 6).
+struct SplLimits
+{
+    bool enabled = true;
+    float laeq15 = 102.0f, lceq15 = 118.0f;
+};
+
 // Air conditions now and when the system was tuned (for HF absorption compensation).
 struct AirConfig
 {
@@ -112,6 +120,7 @@ struct CalibrationData
 {
     std::map<juce::String, double> ioLatency; // "outDev|inDev|sr|buffer" -> samples
     std::map<juce::String, double> splOffset; // mic source name -> dB to add to dBFS for dB SPL
+    std::map<juce::String, juce::String> splMethod; // calibrator | reference | estimate
     juce::String micCalPath;
 };
 
@@ -123,6 +132,7 @@ struct SystemState
     GeneratorConfig gen;
     MeasureConfig measure;
     AirConfig air;
+    SplLimits limits;
     CalibrationData cal;
 
     // Recompute each output's air-compensation shelf from the conditions.

@@ -115,3 +115,34 @@ TEST_CASE("Room decay: RT60 of a synthetic exponential decay")
     }
 }
 
+
+TEST_CASE("SPL meter: Impulse, C-peak, max hold and sliding Leq windows")
+{
+    vt::SplMeter m;
+    m.prepare(sr);
+    auto loud = sine(1000, -20, 10.0), quiet = sine(1000, -40, 5.0);
+    m.process(loud.data(), int(loud.size()));
+    auto r = m.reading();
+    CHECK_THAT(r.impulse[1], WithinAbs(-20.0, 0.2));        // steady tone: Impulse = Fast = Slow
+    m.resetLeq();                                           // drop the filter's start-up overshoot
+    m.process(loud.data(), int(sr));                        // (a peak meter rightly catches it)
+    r = m.reading();
+    CHECK_THAT(r.cPeak, WithinAbs(-20.0 + 3.01, 0.1));      // C is 0 dB at 1 kHz; sine peak = RMS + 3 dB
+    m.process(quiet.data(), int(quiet.size()));
+    r = m.reading();
+    CHECK_THAT(r.maxFast[1], WithinAbs(-20.0, 0.2));        // max hold remembers the loud part
+    // Leq windows: 1 s = last second (quiet); 10 s = 5 s loud + 5 s quiet.
+    CHECK_THAT(r.leqWindow[0][1], WithinAbs(-40.0, 0.2));
+    CHECK_THAT(r.leqWindow[1][1], WithinAbs(-22.96, 0.2));
+    // 60 s window with only 16 s of history (10 + 1 + 5): Leq over what exists.
+    CHECK_THAT(r.leqWindow[2][1], WithinAbs(10 * std::log10((11 * 0.01 + 5 * 0.0001) / 16.0), 0.2));
+    // Impulse falls slowly (≈ 2.9 dB/s), Fast quickly.
+    vt::SplMeter d;
+    d.prepare(sr);
+    auto burst = sine(1000, -20, 1.0), silence = std::vector<float>(size_t(0.5 * sr), 0.0f);
+    d.process(burst.data(), int(burst.size()));
+    d.process(silence.data(), int(silence.size()));
+    auto q = d.reading();
+    CHECK(q.impulse[0] > q.fast[0] + 10.0);
+    CHECK_THAT(q.impulse[0], WithinAbs(-20.0 - 2.9 * 0.5, 0.5));
+}

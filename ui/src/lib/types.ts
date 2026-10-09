@@ -28,8 +28,9 @@ export interface SystemState {
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
   measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean;
              positions: string[]; positionMics: number[]; groups: { name: string; outputs: number[] }[] };
+  limits: { enabled: boolean; laeq15: number; lceq15: number };
   air: { enabled: boolean; tempC: number; humidity: number; pressureKPa: number; refTempC: number; refHumidity: number };
-  cal: { ioLatency: Record<string, number>; micCalPath: string; splOffset: Record<string, number> };
+  cal: { ioLatency: Record<string, number>; micCalPath: string; splOffset: Record<string, number>; splMethod: Record<string, string> };
 }
 
 export interface Status {
@@ -38,7 +39,11 @@ export interface Status {
   numIn: number; numOut: number; cpu: number; xruns: number; callbacks: number;
   running: boolean; faultMuted: boolean; muteAll: boolean; error: string;
   sweeping: boolean; aligning: boolean; matrixRunning: boolean; canUndo: number; canRedo: number;
-  spl: { fast: number[]; slow: number[]; leq: number[]; peak: number; leqSeconds: number; calibrated: boolean }; // [Z, A, C]
+  // Sound level of the main mic, in dB SPL (offset applied). Arrays are [Z, A, C].
+  spl: { fast: number[]; slow: number[]; impulse: number[]; leq: number[]; max: number[]; leqWindows: number[][];
+         peak: number; cPeak: number; leqSeconds: number; calibrated: boolean;
+         method: 'calibrator' | 'reference' | 'estimate' | 'default'; offset: number; micDbfs: number };
+  levels: { ref: number; mic: number }; // dBFS RMS, for gain matching
   driverLatency: number; ioLatency: number; ioLatencyCalibrated: boolean; calibrating: boolean;
   inPeak: number[]; outPeak: number[]; limGr: number[];
 }

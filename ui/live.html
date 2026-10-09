@@ -47,6 +47,12 @@
     <div class="toolbar">
       <button id="muteAll">MUTE ALL</button>
       <span id="splLive" class="big" style="min-width:120px"></span>
+      <span id="limLive" title="click to set the limits" style="cursor:pointer"></span>
+      <span id="limPanel" hidden>
+        <label><input type="checkbox" id="limOn"/> limits</label>
+        <select id="limPreset"><option value="fr">France 2017 (102 dB(A) / 118 dB(C))</option><option value="kids">France 2017, under-6s (94 / 104)</option><option value="custom">custom</option></select>
+        LAeq 15′ <input type="number" id="limA" step="0.5" style="width:54px"/> LCeq 15′ <input type="number" id="limC" step="0.5" style="width:54px"/>
+      </span>
       <button id="airBtn" title="Air absorption compensation">AIR off</button>
       <span id="airPanel" hidden><label><input type="checkbox" id="airOn"/> on</label>
         <input type="number" id="airT" step="0.5" style="width:56px"/>°C <input type="number" id="airH" step="1" style="width:50px"/>% RH

@@ -5,6 +5,7 @@ import { installUndo } from './lib/undo';
 import { linToDb, samplesToMs } from './lib/scale';
 import { EqEditor } from './lib/eqeditor';
 import { Channels } from './lib/channels';
+import { loadPrefs, readingName, fmt, limitState, throttled, openCalibration } from './lib/spl';
 import type { OutputConfig, Status, SystemState } from './lib/types';
 
 const engine = connectFromLocation();
@@ -249,18 +250,46 @@ channels.onChange(() => engine.state && renderStrips(engine.state));
 engine.on('status', (st) => { renderMeters(st); renderBanner(st); });
 engine.on('open', () => void refreshSnapshots().catch(() => undefined));
 
-// ---------------------------------------------------------------- SPL readout (same weighting/speed as Measurement)
-engine.on('status', (st) => {
+// ---------------------------------------------------------------- SPL readout + legal limits
+// Same weighting / time weighting / refresh rate as chosen in the Measurement window.
+let splPrefs = loadPrefs();
+window.addEventListener('storage', (e) => { if (e.key?.startsWith('vt.spl')) splPrefs = loadPrefs(); });
+const renderSplLive = throttled<import('./lib/types').Status>(() => splPrefs.refreshHz, (st) => {
   const s = st.spl;
   if (!s) return;
-  let w = 1, t: 'fast' | 'slow' = 'slow';
-  try { w = Number(localStorage.getItem('vt.splW') ?? '1'); t = (localStorage.getItem('vt.splT') as 'fast' | 'slow') ?? 'slow'; } catch { /* defaults */ }
-  const letter = ['Z', 'A', 'C'][w] ?? 'A';
-  const v = s[t]?.[w] ?? -200;
+  const w = splPrefs.weighting, v = s[splPrefs.time]?.[w] ?? -200;
   $('splLive').innerHTML = v > -150
-    ? `L${letter}${t === 'fast' ? 'F' : 'S'} ${v.toFixed(1)} <span class="dim" style="font-size:11px">${s.calibrated ? `dB · L${letter}eq ${s.leq[w].toFixed(1)}` : 'dBFS (uncal.)'}</span>`
+    ? `${readingName(w, splPrefs.time)} ${s.calibrated ? '' : '≈'}${v.toFixed(1)} <span style="font-size:11px">${s.calibrated
+        ? '<span class="dim">dB</span>' : '<a href="#" id="liveCal" class="warn" title="not calibrated: rough estimate">uncal. · calibrate</a>'}</span>`
     : '';
+  document.getElementById('liveCal')?.addEventListener('click', (e) => { e.preventDefault(); openCalibration(engine); });
+
+  const lim = engine.state?.limits;
+  if (!lim?.enabled) { $('limLive').innerHTML = '<span class="dim">limits off</span>'; return; }
+  const a15 = s.leqWindows?.[4]?.[1] ?? -200, c15 = s.leqWindows?.[4]?.[2] ?? -200;
+  const cell = (name: string, val: number, limit: number) =>
+    `<span class="lim-${val > -150 ? limitState(val, limit) : 'ok'}">${name} ${s.calibrated ? '' : '≈'}${fmt(val)}<span class="dim">/${limit}</span></span>`;
+  $('limLive').innerHTML = `${cell('LAeq 15′', a15, lim.laeq15)} ${cell('LCeq 15′', c15, lim.lceq15)}`;
 });
+engine.on('status', renderSplLive);
+
+$('limLive').onclick = () => { $('limPanel').hidden = !$('limPanel').hidden; };
+function renderLimits(st: import('./lib/types').SystemState): void {
+  const l = st.limits;
+  ($('limOn') as HTMLInputElement).checked = l.enabled;
+  if (document.activeElement !== $('limA')) ($('limA') as HTMLInputElement).value = String(l.laeq15);
+  if (document.activeElement !== $('limC')) ($('limC') as HTMLInputElement).value = String(l.lceq15);
+  ($('limPreset') as HTMLSelectElement).value = l.laeq15 === 102 && l.lceq15 === 118 ? 'fr' : l.laeq15 === 94 && l.lceq15 === 104 ? 'kids' : 'custom';
+}
+engine.on('state', renderLimits);
+$('limOn').onchange = (e) => report(engine.patch('limits/enabled', (e.target as HTMLInputElement).checked));
+$('limPreset').onchange = (e) => {
+  const v = (e.target as HTMLSelectElement).value;
+  if (v === 'fr') report(engine.patchMany([{ path: 'limits/laeq15', value: 102 }, { path: 'limits/lceq15', value: 118 }]));
+  if (v === 'kids') report(engine.patchMany([{ path: 'limits/laeq15', value: 94 }, { path: 'limits/lceq15', value: 104 }]));
+};
+$('limA').onchange = (e) => report(engine.patch('limits/laeq15', Number((e.target as HTMLInputElement).value)));
+$('limC').onchange = (e) => report(engine.patch('limits/lceq15', Number((e.target as HTMLInputElement).value)));
 
 // ---------------------------------------------------------------- undo / redo buttons
 $('undoBtn').onclick = () => void engine.request('history.undo').catch(() => undefined);

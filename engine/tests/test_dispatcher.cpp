@@ -230,3 +230,37 @@ TEST_CASE("Dispatcher: undo / redo of tuning changes")
     auto r = f.d->handle(cmd(R"({"id":7,"cmd":"history.redo"})"));
     CHECK_FALSE(bool(r["ok"]));
 }
+
+TEST_CASE("Dispatcher: SPL estimate by default, then reference-meter and datasheet calibration")
+{
+    Fixture f;
+    f.d->handle(cmd(R"({"id":1,"cmd":"routing.addSource","args":{"type":"mic","name":"Mic FOH","channel":1}})"));
+    auto st = f.d->statusVar();
+    CHECK(st["spl"]["method"].toString() == "default");     // estimate until calibrated
+    CHECK_FALSE(bool(st["spl"]["calibrated"]));
+    CHECK(std::abs(double(st["spl"]["offset"]) - vt::Dispatcher::kDefaultSplOffset) < 1e-9);
+
+    // Pink-ish signal at −30 dBFS; the reference meter says 96.0 dB(A).
+    std::vector<float> ref(512, 0.0f), mic(512);
+    double ph = 0;
+    for (int b = 0; b < int(6 * 48000 / 512); ++b) {
+        for (auto& x : mic) { x = float(0.0316 * std::sqrt(2.0) * std::sin(ph)); ph += 2 * M_PI * 1000 / 48000; }
+        f.engine.analyzer().pushRef(ref.data(), 512);
+        f.engine.analyzer().pushMeas(mic.data(), 512);
+        f.engine.analyzer().process();
+    }
+    auto r = f.d->handle(cmd(R"({"id":2,"cmd":"spl.calibrate","args":{"level":96,"weighting":1,"method":"reference"}})"));
+    REQUIRE(bool(r["ok"]));
+    st = f.d->statusVar();
+    CHECK(st["spl"]["method"].toString() == "reference");
+    CHECK(bool(st["spl"]["calibrated"]));
+    CHECK(std::abs(double(st["spl"]["slow"][1]) - 96.0) < 0.2);
+
+    r = f.d->handle(cmd(R"({"id":3,"cmd":"spl.setOffset","args":{"offsetDb":112.5}})"));
+    REQUIRE(bool(r["ok"]));
+    st = f.d->statusVar();
+    CHECK(st["spl"]["method"].toString() == "estimate");
+    CHECK_FALSE(bool(st["spl"]["calibrated"]));            // datasheet values stay an estimate
+    CHECK(f.d->stateForTest().limits.laeq15 == 102.0f);    // France 2017 defaults
+    CHECK(f.d->stateForTest().limits.lceq15 == 118.0f);
+}

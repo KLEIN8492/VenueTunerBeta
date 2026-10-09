@@ -1,6 +1,7 @@
 import './lib/style.css';
 import { connectFromLocation, type TfFrame, type RtaFrame, type DecayBand } from './lib/engine';
 import { parseTraceText } from './lib/traceimport';
+import { loadPrefs, savePrefs, readingName, fmt, trustLabel, throttled, openCalibration, WINDOW_NAMES, type TimeW } from './lib/spl';
 import { Plot, type PlotTrace } from './lib/plot';
 import { mountStatusBar, esc } from './lib/statusbar';
 import { installUndo } from './lib/undo';
@@ -43,7 +44,7 @@ const TF_VIEW = { title: 'MAGNITUDE', yUnit: 'dB', yMin: -30, yMax: 15, yStep: 5
 function rtaTrace(f: RtaFrame): PlotTrace {
   const perOct = f.freq.length > 1 ? Math.round(1 / Math.log2(f.freq[1] / f.freq[0])) : 3;
   const x: number[] = [], y: number[] = [];
-  const off = f.calibrated ? f.offsetDb : 0;
+  const off = f.offsetDb; // dB SPL: calibrated, or the labelled estimate
   f.freq.forEach((fc, i) => {
     const lo = fc * Math.pow(2, -0.5 / perOct), hi = fc * Math.pow(2, 0.5 / perOct);
     x.push(lo, hi); y.push(f.levelDb[i] + off, f.levelDb[i] + off);
@@ -80,8 +81,8 @@ engine.on('tf', (f) => { live = f; if (view === 'tf') redraw(); renderDelay(); }
 engine.on('rta', (f) => {
   rta = f;
   if (view !== 'rta') return;
-  const unit = f.calibrated ? 'dB SPL' : 'dBFS';
-  if (mag.opts.yUnit !== unit) Object.assign(mag.opts, f.calibrated ? { yUnit: unit, yMin: 20, yMax: 120, yStep: 10 } : { yUnit: unit, yMin: -100, yMax: 0, yStep: 10 });
+  const unit = f.calibrated ? 'dB SPL' : 'dB SPL ≈ (not calibrated)';
+  if (mag.opts.yUnit !== unit) Object.assign(mag.opts, { yUnit: unit, yMin: 20, yMax: 120, yStep: 10 });
   redraw();
 });
 engine.on('ir', (f) => {
@@ -105,11 +106,19 @@ side.innerHTML = `
   <div class="sidetabs" id="sideTabs"><button data-st="measure" class="on">Measure</button><button data-st="matrix">Matrix</button><button data-st="autoeq">Auto-EQ</button><button data-st="align">Align</button><button data-st="room">Room</button></div>
   <div data-sp="measure">
   <h2>Sound level</h2>
-  <div class="row"><span id="splVal" class="big">—</span><span id="splUnit" class="dim grow"></span><span id="splPeak" class="dim"></span></div>
-  <div class="row"><select id="splW"><option value="1">A</option><option value="2">C</option><option value="0">Z</option></select>
-    <select id="splT"><option value="slow">Slow</option><option value="fast">Fast</option></select>
-    <span id="splLeq" class="dim grow"></span><button id="splReset" title="reset Leq">↺ Leq</button></div>
-  <div class="row"><label>Calibrator</label><input id="splCalLevel" type="number" value="94" step="0.1"/><span class="dim">dB</span><button id="splCal" class="grow">Calibrate mic</button></div>
+  <div class="row"><span id="splVal" class="big">—</span><span id="splUnit" class="grow"></span><button id="splCalBtn">Calibrate…</button></div>
+  <div id="splTrust" class="dim"></div>
+  <div class="row"><select id="splW" title="frequency weighting"><option value="1">A</option><option value="2">C</option><option value="0">Z</option></select>
+    <select id="splT" title="time weighting"><option value="fast">Fast 125 ms</option><option value="slow">Slow 1 s</option><option value="impulse">Impulse 35 ms</option></select>
+    <select id="splHz" title="how often the number refreshes"><option value="1">1×/s</option><option value="2">2×/s</option><option value="5">5×/s</option><option value="10">10×/s</option></select></div>
+  <div class="row"><label>Leq</label><select id="splWin">${WINDOW_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('')}</select>
+    <span id="splLeq" class="grow"></span><button id="splReset" title="reset Leq since reset, max and peak">↺</button></div>
+  <div id="splExtra" class="dim"></div>
+
+  <h2>Mic gain vs reference</h2>
+  <div class="row"><label>REF</label><div class="lvbar"><div id="lvRef" style="background:var(--accent)"></div></div><span id="lvRefV" class="dim" style="width:52px;text-align:right"></span></div>
+  <div class="row"><label>MIC</label><div class="lvbar"><div id="lvMic" style="background:var(--ok)"></div></div><span id="lvMicV" class="dim" style="width:52px;text-align:right"></span></div>
+  <div id="lvHint" class="dim">Play pink noise: set the mic preamp so MIC sits close to REF (within ~6 dB) for clean, well-scaled measurements.</div>
   <div class="row"><label>View</label><button id="viewTf" class="on grow">Transfer fn</button><button id="viewRta" class="grow">RTA</button><select id="rtaRes"><option value="3">1/3</option><option value="6">1/6</option></select></div>
 
   <h2>Generator</h2>
@@ -397,30 +406,56 @@ document.addEventListener('keydown', (e) => {
 renderTraces();
 
 // ---------------------------------------------------------------- sound level
-const pref = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
-const setPref = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
-($('splW') as HTMLSelectElement).value = pref('vt.splW', '1');
-($('splT') as HTMLSelectElement).value = pref('vt.splT', 'slow');
-$('splW').onchange = (e) => setPref('vt.splW', (e.target as HTMLSelectElement).value);
-$('splT').onchange = (e) => setPref('vt.splT', (e.target as HTMLSelectElement).value);
-engine.on('status', (st) => {
+const prefs = loadPrefs();
+($('splW') as HTMLSelectElement).value = String(prefs.weighting);
+($('splT') as HTMLSelectElement).value = prefs.time;
+($('splHz') as HTMLSelectElement).value = String(prefs.refreshHz);
+($('splWin') as HTMLSelectElement).value = String(prefs.window);
+const savePref = () => {
+  prefs.weighting = Number(($('splW') as HTMLSelectElement).value);
+  prefs.time = ($('splT') as HTMLSelectElement).value as TimeW;
+  prefs.refreshHz = Number(($('splHz') as HTMLSelectElement).value);
+  prefs.window = Number(($('splWin') as HTMLSelectElement).value);
+  savePrefs(prefs);
+};
+['splW', 'splT', 'splHz', 'splWin'].forEach((id) => ($(id).onchange = savePref));
+$('splCalBtn').onclick = () => openCalibration(engine);
+$('splReset').onclick = () => report(engine.request('spl.resetLeq'));
+const renderSpl = throttled<import('./lib/types').Status>(() => prefs.refreshHz, (st) => {
   const s = st.spl;
   if (!s) return;
-  const w = Number(($('splW') as HTMLSelectElement).value), t = ($('splT') as HTMLSelectElement).value as 'fast' | 'slow';
-  const letter = ['Z', 'A', 'C'][w];
-  const v = s[t][w];
-  $('splVal').textContent = v > -150 ? v.toFixed(1) : '—';
-  $('splUnit').innerHTML = `L${letter}${t === 'fast' ? 'F' : 'S'} ${s.calibrated ? 'dB SPL' : '<span class="warn">dBFS · mic not calibrated</span>'}`;
-  $('splPeak').textContent = s.peak > -150 ? `peak ${s.peak.toFixed(1)}` : '';
+  const w = prefs.weighting, letter = ['Z', 'A', 'C'][w];
+  const est = !s.calibrated;
+  $('splVal').textContent = `${est && s[prefs.time][w] > -150 ? '≈' : ''}${fmt(s[prefs.time][w])}`;
+  $('splUnit').innerHTML = `${readingName(w, prefs.time)} dB SPL`;
+  const t = trustLabel(s);
+  $('splTrust').innerHTML = `<span class="${t.cls}">${t.text}</span>${est ? ' · <a href="#" id="splCalLink">calibrate</a>' : ''}`;
+  const link = document.getElementById('splCalLink');
+  if (link) link.onclick = (e) => { e.preventDefault(); openCalibration(engine); };
+  const leq = prefs.window === 5 ? s.leq[w] : s.leqWindows[prefs.window]?.[w] ?? -200;
+  $('splLeq').textContent = `L${letter}eq ${fmt(leq)}`;
   const m = Math.floor(s.leqSeconds / 60), sec = Math.floor(s.leqSeconds % 60);
-  $('splLeq').textContent = s.leq[w] > -150 ? `L${letter}eq ${s.leq[w].toFixed(1)} (${m}:${String(sec).padStart(2, '0')})` : '';
+  $('splExtra').textContent = `LCpeak ${fmt(s.cPeak)} · max L${letter}F ${fmt(s.max[w])} · since reset ${m}:${String(sec).padStart(2, '0')} · mic ${fmt(s.micDbfs)} dBFS`;
 });
-$('splReset').onclick = () => report(engine.request('spl.resetLeq'));
-$('splCal').onclick = () => {
-  const level = Number(($('splCalLevel') as HTMLInputElement).value);
-  if (!confirm(`Put the ${level} dB calibrator on the measurement mic and switch it on. Calibrate now?`)) return;
-  report(engine.request<number>('spl.calibrate', { level }).then((off) => alert(`Mic calibrated (offset ${off.toFixed(2)} dB).`)));
-};
+engine.on('status', renderSpl);
+
+// Mic gain vs reference (Smaart-style): REF = generator / loopback, MIC = main mic, dBFS.
+const pct = (db: number) => `${Math.max(0, Math.min(100, ((db + 80) / 80) * 100))}%`;
+engine.on('status', (st) => {
+  const l = st.levels;
+  if (!l) return;
+  ($('lvRef') as HTMLElement).style.width = pct(l.ref);
+  ($('lvMic') as HTMLElement).style.width = pct(l.mic);
+  $('lvRefV').textContent = fmt(l.ref);
+  $('lvMicV').textContent = fmt(l.mic);
+  if (l.ref < -100) { $('lvHint').textContent = 'No reference signal: turn the generator on (or pick the reference input).'; return; }
+  if (l.mic < -100) { $('lvHint').innerHTML = '<span class="bad">No mic signal: check the mic, its input and phantom power.</span>'; return; }
+  const d = l.ref - l.mic;
+  $('lvHint').innerHTML = Math.abs(d) <= 6 ? `<span class="ok">✓ matched (${d >= 0 ? 'mic ' + d.toFixed(0) + ' dB lower' : 'mic ' + (-d).toFixed(0) + ' dB higher'})</span>`
+    : d > 0 ? `<span class="warn">mic ${d.toFixed(0)} dB below the reference: raise the mic preamp ≈ ${d.toFixed(0)} dB</span>`
+    : `<span class="warn">mic ${(-d).toFixed(0)} dB above the reference: lower the mic preamp ≈ ${(-d).toFixed(0)} dB${l.mic > -3 ? ' (it is close to clipping)' : ''}</span>`;
+  if (l.mic > -1) $('lvHint').innerHTML = '<span class="bad">MIC CLIPPING: lower the preamp gain</span>';
+});
 
 // ---------------------------------------------------------------- TF / RTA view
 function setView(v: 'tf' | 'rta'): void {
@@ -446,6 +481,8 @@ $('importFile').onchange = async (e) => {
 };
 
 // ---------------------------------------------------------------- room acoustics
+const pref = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const setPref = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
 const decayPlot = new Plot($('decayPlot') as HTMLCanvasElement, { xMin: 0, xMax: 1.5, logX: false, yMin: -70, yMax: 0, yStep: 10, yUnit: 'dB', title: 'DECAY', yLocked: true, xFormat: (x) => `${x.toFixed(1)}s` });
 function renderDecay(bands: DecayBand[]): void {
   const fmt = (v: number) => (v > 0 ? v.toFixed(2) : '—');

@@ -395,6 +395,11 @@ juce::var toVar(const SystemState& s)
     air.getDynamicObject()->setProperty("refTempC", s.air.refTempC);
     air.getDynamicObject()->setProperty("refHumidity", s.air.refHumidity);
     r->setProperty("air", air);
+    auto lim = obj();
+    lim.getDynamicObject()->setProperty("enabled", s.limits.enabled);
+    lim.getDynamicObject()->setProperty("laeq15", s.limits.laeq15);
+    lim.getDynamicObject()->setProperty("lceq15", s.limits.lceq15);
+    r->setProperty("limits", lim);
 
     auto c = obj();
     auto lat = obj();
@@ -403,6 +408,9 @@ juce::var toVar(const SystemState& s)
     auto spl = obj();
     for (auto& [k, v] : s.cal.splOffset) spl.getDynamicObject()->setProperty(k, v);
     c.getDynamicObject()->setProperty("splOffset", spl);
+    auto meth = obj();
+    for (auto& [k, v] : s.cal.splMethod) meth.getDynamicObject()->setProperty(k, v);
+    c.getDynamicObject()->setProperty("splMethod", meth);
     c.getDynamicObject()->setProperty("micCalPath", s.cal.micCalPath);
     r->setProperty("cal", c);
     return root;
@@ -465,6 +473,10 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
               && r.num("pressureKPa", s.air.pressureKPa, 60, 110) && r.num("refTempC", s.air.refTempC, -30, 55)
               && r.num("refHumidity", s.air.refHumidity, 0, 100))) return false;
     }
+    if (v.hasProperty("limits")) {
+        Reader r { v["limits"], "limits/", err };
+        if (!(r.boolean("enabled", s.limits.enabled) && r.num("laeq15", s.limits.laeq15, 60, 140) && r.num("lceq15", s.limits.lceq15, 60, 150))) return false;
+    }
     if (v.hasProperty("cal")) {
         const auto& c = v["cal"];
         Reader r { c, "cal/", err };
@@ -479,6 +491,8 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
                 if (!(p.value.isDouble() || p.value.isInt())) { err = "cal/splOffset: expected numbers"; return false; }
                 s.cal.splOffset[p.name.toString()] = double(p.value);
             }
+        if (auto* m = c["splMethod"].getDynamicObject())
+            for (auto& p : m->getProperties()) s.cal.splMethod[p.name.toString()] = p.value.toString();
     }
     // Cross-checks: mix rows match the source list; references exist; one output per channel.
     for (auto& o : s.outputs) o.mix.resize(s.sources.size(), 0.0f);

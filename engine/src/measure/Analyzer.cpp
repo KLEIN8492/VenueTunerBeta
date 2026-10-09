@@ -106,10 +106,14 @@ bool Analyzer::process()
     size_t done = 0;
     while (done < n) {
         const size_t chunk = std::min(n - done, scratch.size());
+        const double a = 1.0 - std::exp(-double(chunk) / (0.3 * sr)); // ~300 ms level average
+        auto meanSquare = [&] { double e = 0; for (size_t i = 0; i < chunk; ++i) e += double(scratch[i]) * scratch[i]; return e / double(chunk); };
         refFifo.pop(scratch.data(), chunk);
         for (size_t i = 0; i < chunk; ++i) refHist[size_t(total + int64_t(i)) & (kHistory - 1)] = scratch[i];
+        refMs.store(refMs.load() + a * (meanSquare() - refMs.load()));
         measFifo.pop(scratch.data(), chunk);
         for (size_t i = 0; i < chunk; ++i) measHist[size_t(total + int64_t(i)) & (kHistory - 1)] = scratch[i];
+        measMs.store(measMs.load() + a * (meanSquare() - measMs.load()));
         splMeter.process(scratch.data(), int(chunk));
         rtaMeter.process(scratch.data(), int(chunk));
         total += int64_t(chunk);

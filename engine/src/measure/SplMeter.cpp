@@ -44,9 +44,15 @@ void SplMeter::prepare(double sampleRate)
     }
     aFast = 1.0 - std::exp(-1.0 / (0.125 * sr));
     aSlow = 1.0 - std::exp(-1.0 / (1.0 * sr));
-    msFast = msSlow = leqSum = {};
+    aImpRise = 1.0 - std::exp(-1.0 / (0.035 * sr)); // Impulse: 35 ms rise
+    aImpFall = 1.0 - std::exp(-1.0 / (1.5 * sr));   // …and ~2.9 dB/s fall
+    msFast = msSlow = msImp = imp35 = leqSum = secSum = {};
+    maxFast.fill(0.0);
+    for (auto& v : secMs) v.assign(size_t(kWindowSeconds[kWindows - 1]), 0.0);
+    secCount = 0;
+    secHead = secFilled = 0;
     leqCount = 0;
-    peak = 0;
+    peak = cPeak = 0;
 }
 
 void SplMeter::process(const float* x, int n)
@@ -60,7 +66,20 @@ void SplMeter::process(const float* x, int n)
             const double y2 = y * y;
             msFast[k] += aFast * (y2 - msFast[k]);
             msSlow[k] += aSlow * (y2 - msSlow[k]);
+            // IEC Impulse: 35 ms exponential average, then a hold that falls back with a 1.5 s
+            // time constant (≈ 2.9 dB/s). Applying rise/fall to raw samples would ride the peaks.
+            imp35[k] += aImpRise * (y2 - imp35[k]);
+            msImp[k] = imp35[k] > msImp[k] ? imp35[k] : msImp[k] + aImpFall * (imp35[k] - msImp[k]);
+            maxFast[k] = std::max(maxFast[k], msFast[k]);
             leqSum[k] += y2;
+            secSum[k] += y2;
+            if (k == 2) cPeak = std::max(cPeak, std::abs(y));
+        }
+        if (++secCount >= (long long)sr) { // a second completed: push it into the sliding ring
+            for (size_t k = 0; k < 3; ++k) { secMs[k][secHead] = secSum[k] / double(secCount); secSum[k] = 0; }
+            secHead = (secHead + 1) % secMs[0].size();
+            secFilled = std::min(secFilled + 1, secMs[0].size());
+            secCount = 0;
         }
     }
     leqCount += n;
@@ -76,7 +95,24 @@ SplMeter::Reading SplMeter::reading()
         r.leq[k] = leqCount ? db(leqSum[k] / double(leqCount)) : -200.0;
     }
     r.peakZ = peak > 0 ? 20.0 * std::log10(peak) : -200.0;
+    r.cPeak = cPeak > 0 ? 20.0 * std::log10(cPeak) : -200.0;
     r.leqSeconds = double(leqCount) / sr;
+    for (size_t k = 0; k < 3; ++k) {
+        r.impulse[k] = db(msImp[k]);
+        r.maxFast[k] = db(maxFast[k]);
+        // Sliding windows: the last T−1 complete seconds + the current partial second
+        // (or whatever history exists if the meter has run for less than T).
+        for (int w = 0; w < kWindows; ++w) {
+            const size_t want = size_t(kWindowSeconds[w]);
+            double energy = secSum[k], samples = double(secCount);
+            const size_t full = std::min(secFilled, secCount > 0 ? want - 1 : want);
+            for (size_t i = 1; i <= full; ++i) {
+                energy += secMs[k][(secHead + secMs[k].size() - i) % secMs[k].size()] * sr;
+                samples += sr;
+            }
+            r.leqWindow[size_t(w)][k] = samples > 0 ? db(energy / samples) : -200.0;
+        }
+    }
     peak = 0;
     return r;
 }
@@ -86,6 +122,8 @@ void SplMeter::resetLeq()
     std::lock_guard<std::mutex> l(lock);
     leqSum = {};
     leqCount = 0;
+    maxFast.fill(0.0);
+    cPeak = 0;
 }
 
 } // namespace vt

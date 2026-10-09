@@ -38,7 +38,13 @@ public:
     juce::var statusVar();
     // Next tuning change starts a new undo step (tests; the UI uses time-based merging).
     void forceNewUndoStep() { lastUndoKey = {}; }
-    std::pair<double, bool> splOffset() const; // offset for the current mic, calibrated?
+    // Offset (dB) to turn the main mic's dBFS into dB SPL, and how it was obtained:
+    // "calibrator" | "reference" | "estimate" (datasheet values) | "default" (typical values).
+    struct SplCal { double offset; juce::String method; bool calibrated() const { return method == "calibrator" || method == "reference"; } };
+    SplCal splCal() const;
+    std::pair<double, bool> splOffset() const { const auto c = splCal(); return { c.offset, c.calibrated() }; }
+    // Typical measurement mic (10 mV/Pa), interface at +18 dBu for 0 dBFS, 40 dB of preamp gain.
+    static constexpr double kDefaultSplOffset = 109.8;
     SystemState& stateForTest() { return state; }
     const SystemState& getState() const { return state; }
 

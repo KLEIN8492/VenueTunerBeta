@@ -64,6 +64,9 @@ public:
 
     // Fed with the same mic samples on the analysis thread; independent of the TF reset.
     SplMeter& spl() { return splMeter; }
+    // Reference and mic levels (dBFS RMS, ~300 ms): for matching the mic gain to the reference.
+    double refLevelDb() const { const double v = refMs.load(); return v > 0 ? 10.0 * std::log10(v) : -200.0; }
+    double micLevelDb() const { const double v = measMs.load(); return v > 0 ? 10.0 * std::log10(v) : -200.0; }
     Rta& rta() { return rtaMeter; }
 
     static constexpr int kFixedOrder = 14;             // fixed mode: 16384 points
@@ -117,6 +120,7 @@ private:
     mutable std::mutex resultLock;
     Result latest, sweep;
     SplMeter splMeter;
+    std::atomic<double> refMs { 0.0 }, measMs { 0.0 };
     Rta rtaMeter;
     std::atomic<int64_t> sweepRequest { 0 };
     std::atomic<int> sweepGen { 0 };

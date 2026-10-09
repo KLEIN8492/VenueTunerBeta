@@ -71,8 +71,14 @@ Settings, snapshots and calibration live in `~/Library/Application Support/Venue
    - **Align**: capture the top alone and the sub alone from the same position; Compute finds the
      delay and polarity that sum best around the crossover (using phase). Apply sets them.
 5. **Sound level, RTA, room** (Measurement window):
-   - **Sound level**: LAS/LCF/LZ… with Leq and peak. Calibrate once per mic with a calibrator
-     (94 dB default); the reading is also shown in the Live window toolbar.
+   - **Sound level** in dB SPL: A/C/Z × Fast/Slow/Impulse, Leq over 1 s … 15 min or since reset,
+     LCpeak, max; refresh 1–10×/s. Until a mic is calibrated the value is shown as an estimate (≈,
+     ±10 dB). **Calibrate…** offers: calibrator (most accurate), match a reference meter (type what
+     Smaart / an SPL meter reads), or datasheet values (mic mV/Pa, interface dBu at 0 dBFS, gain).
+     Re-calibrate after changing the preamp gain.
+   - **Mic gain vs reference**: REF and MIC meters with a hint to set the preamp so they match.
+   - **Live toolbar**: the SPL reading and the France 2017 limits (LAeq 15 min ≤ 102 dB(A), LCeq
+     15 min ≤ 118 dB(C); 94/104 for under-6s events; custom), amber within 3 dB, red over.
    - **View → RTA**: real-time 1/3 or 1/6-octave spectrum of the mic (works on show music, no generator needed).
    - **Room tab**: after a log sweep, EDT / T20 / T30 per octave (63 Hz–8 kHz) with decay curves.
    - **Traces → Import…**: REW / Smaart / VenueTuner text exports, to compare with old measurements.
