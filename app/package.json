@@ -5,9 +5,67 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --mac --universal"
   },
   "devDependencies": {
-    "electron": "33.2.0"
+    "electron": "33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "description": "Live PA system processor and measurement tool",
+  "author": "VenueTuner",
+  "build": {
+    "appId": "com.venuetuner.app",
+    "productName": "VenueTuner",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../ui/dist",
+        "to": "ui"
+      },
+      {
+        "from": "../engine/build-universal/VenueTunerEngine",
+        "to": "engine/VenueTunerEngine"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "minimumSystemVersion": "13.0",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "x64ArchFiles": "Contents/Resources/engine/VenueTunerEngine",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "VenueTuner measures your sound system through the audio interface and the measurement microphone.",
+        "NSHighResolutionCapable": true
+      }
+    },
+    "dmg": {
+      "title": "VenueTuner ${version}"
+    },
+    "afterPack": "build/adhoc-sign.js"
   }
 }

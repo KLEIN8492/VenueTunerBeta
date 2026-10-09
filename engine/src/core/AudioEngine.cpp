@@ -50,7 +50,10 @@ juce::String AudioEngine::openDevice(const DeviceConfig& cfg)
     // Empty names (first launch, fresh install) mean "the system's default devices", not none.
     setup.inputDeviceName = cfg.inputDevice;
     setup.outputDeviceName = cfg.outputDevice;
-    if (auto* type = dm.getCurrentDeviceTypeObject()) {
+    // Only scan when a name is missing: a scan queries every CoreAudio driver, and one
+    // misbehaving driver (e.g. a stuck virtual soundcard) can make it hang.
+    auto* type = setup.outputDeviceName.isEmpty() || setup.inputDeviceName.isEmpty() ? dm.getCurrentDeviceTypeObject() : nullptr;
+    if (type != nullptr) {
         type->scanForDevices();
         auto defaultName = [type](bool input) {
             const auto names = type->getDeviceNames(input);

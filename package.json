@@ -7,6 +7,8 @@
     "build:ui": "npm --prefix ui run build",
     "build": "npm run build:engine && npm run build:ui",
     "test": "engine/build/vt_tests && npm --prefix ui test",
-    "app": "npm run build:ui && npm --prefix app start"
+    "app": "npm run build:ui && npm --prefix app start",
+    "build:engine:universal": "cmake -S engine -B engine/build-universal -DCMAKE_BUILD_TYPE=Release \"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64\" && cmake --build engine/build-universal -j 10 --target VenueTunerEngine",
+    "package": "npm run build:engine:universal && npm run build:ui && npm --prefix app run dist"
   }
 }

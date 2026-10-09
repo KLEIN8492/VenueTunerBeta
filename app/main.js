@@ -8,9 +8,11 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const PORT = Number(process.env.VT_PORT || 47800);
+// Packaged app: engine and UI live in Contents/Resources. Development: in the repo.
 const ROOT = path.resolve(__dirname, '..');
-const UI_DIST = path.join(ROOT, 'ui', 'dist');
-const ENGINE = process.env.VT_ENGINE || path.join(ROOT, 'engine', 'build', 'VenueTunerEngine');
+const UI_DIST = app.isPackaged ? path.join(process.resourcesPath, 'ui') : path.join(ROOT, 'ui', 'dist');
+const ENGINE = process.env.VT_ENGINE
+  || (app.isPackaged ? path.join(process.resourcesPath, 'engine', 'VenueTunerEngine') : path.join(ROOT, 'engine', 'build', 'VenueTunerEngine'));
 const DATA_DIR = process.env.VT_DATA_DIR || path.join(app.getPath('appData'), 'VenueTuner');
 
 protocol.registerSchemesAsPrivileged([
@@ -50,7 +52,7 @@ async function ensureEngine() {
   engine.stdout.on('data', (d) => process.stdout.write(`[engine] ${d}`));
   engine.stderr.on('data', (d) => process.stderr.write(`[engine] ${d}`));
   engine.on('error', (e) => {
-    dialog.showErrorBox('VenueTuner engine', `Could not start the engine:\n${e.message}\n\nBuild it first:  npm run build`);
+    dialog.showErrorBox('VenueTuner engine', `Could not start the engine:\n${e.message}` + (app.isPackaged ? '' : '\n\nBuild it first:  npm run build'));
   });
   engine.on('exit', (code, signal) => {
     console.log(`[shell] engine exited (code ${code}, signal ${signal})`);
