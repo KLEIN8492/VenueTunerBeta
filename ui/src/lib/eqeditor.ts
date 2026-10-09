@@ -43,6 +43,8 @@ export class EqEditor {
   private pending = new Map<string, unknown>();
   private flushTimer = 0;
   private inFlight = 0; // patches sent, reply not yet received
+  private presetNames: string[] = [];
+  private presetSel = '';
   private mag: Plot;
   private phase: Plot;
   private side: HTMLElement;
@@ -67,6 +69,7 @@ export class EqEditor {
     engine.on('state', () => this.adoptEngineState());
     engine.on('tf', (f) => { this.live = f; if (this.showLive) this.redraw(); });
     window.addEventListener('storage', (e) => { if (e.key === 'vt.traces') this.render(); });
+    engine.on('open', () => void this.refreshPresets());
   }
 
   setOutput(i: number): void {
@@ -85,6 +88,14 @@ export class EqEditor {
     this.cfg = structuredClone(o);
     this.render();
   }
+
+  private async refreshPresets(): Promise<void> {
+    try { this.presetNames = await this.engine.request<string[]>('preset.list'); } catch { this.presetNames = []; }
+    if (!this.presetNames.includes(this.presetSel)) this.presetSel = this.cfg?.preset && this.presetNames.includes(this.cfg.preset) ? this.cfg.preset : (this.presetNames[0] ?? '');
+    this.renderPanel();
+  }
+
+  private targets(): number[] { return this.linked ? [...new Set([this.out, ...this.selection()])] : [this.out]; }
 
   private sr(): number { return this.engine.status?.sampleRate || this.engine.state?.device.sampleRate || 48000; }
 
@@ -275,6 +286,12 @@ export class EqEditor {
     this.side.innerHTML = `
       <div class="row"><b class="grow">${this.out + 1} · ${esc(o.name)}</b>
         <label title="apply edits to all selected strips"><input type="checkbox" data-ui="linked" ${this.linked ? 'checked' : ''}/> link</label></div>
+      <div class="row"><label>Preset</label><select data-ui="preset" class="grow">${this.presetNames.length ? this.presetNames.map((n) => opt(n, n, n === this.presetSel)).join('') : opt('', '— none saved —', true)}</select>
+        <button data-act="presetApply" ${this.presetNames.length ? '' : 'disabled'} title="apply the speaker processing (keeps delay, routing, channel)">Apply</button></div>
+      <div class="row"><button data-act="presetSave">Save as…</button><button data-act="presetExport" ${this.presetNames.length ? '' : 'disabled'}>Export</button>
+        <button data-act="presetImport">Import…</button><button data-act="presetDelete" ${this.presetNames.length ? '' : 'disabled'}>Delete</button>
+        <input type="file" data-ui="presetFile" accept=".vtpreset,.json" hidden/></div>
+      ${o.preset ? `<div class="dim">from preset “${esc(o.preset)}”</div>` : ''}
       <div class="row"><label>Base</label><select data-ui="base" class="grow">${opt('', '— none —', !this.baseName)}${traces.map((t) => opt(t.name, t.name, t.name === this.baseName)).join('')}</select></div>
       <div class="row"><label><input type="checkbox" data-ui="live" ${this.showLive ? 'checked' : ''}/> live TF</label><span class="dim">traces level-matched to the EQ curve</span></div>
 
@@ -336,6 +353,8 @@ export class EqEditor {
     if (el.dataset.ui === 'live') { this.showLive = (el as HTMLInputElement).checked; this.redraw(); return; }
     if (el.dataset.ui === 'linked') { this.linked = (el as HTMLInputElement).checked; return; }
     if (el.dataset.ui === 'firFile') { this.loadFir(el as HTMLInputElement); return; }
+    if (el.dataset.ui === 'preset') { this.presetSel = el.value; return; }
+    if (el.dataset.ui === 'presetFile') { void this.importPreset(el as HTMLInputElement); return; }
     const f = el.dataset.f;
     const holder = el.closest<HTMLElement>('[data-k]');
     if (!f || !holder) return;
@@ -377,7 +396,38 @@ export class EqEditor {
       this.render();
     }
     if (act === 'loadFir') this.side.querySelector<HTMLInputElement>('[data-ui=firFile]')!.click();
+    if (act === 'presetApply' && this.presetSel) {
+      const outs = this.targets();
+      this.engine.request('preset.apply', { name: this.presetSel, outputs: outs }).catch((err: Error) => alert(err.message));
+    }
+    if (act === 'presetSave') {
+      const name = prompt('Save this output\'s speaker processing as preset (crossover, EQ, all-pass, limiter, polarity, level, FIR):', o.preset || o.name);
+      if (name) this.engine.request('preset.save', { name, output: this.out }).then(() => { this.presetSel = name; return this.refreshPresets(); }).catch((err: Error) => alert(err.message));
+    }
+    if (act === 'presetDelete' && this.presetSel && confirm(`Delete preset "${this.presetSel}"?`))
+      this.engine.request('preset.delete', { name: this.presetSel }).then(() => this.refreshPresets()).catch((err: Error) => alert(err.message));
+    if (act === 'presetExport' && this.presetSel)
+      this.engine.request<string>('preset.export', { name: this.presetSel }).then((json) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+        a.download = `${this.presetSel}.vtpreset`;
+        a.click();
+      }).catch((err: Error) => alert(err.message));
+    if (act === 'presetImport') this.side.querySelector<HTMLInputElement>('[data-ui=presetFile]')!.click();
     if (act === 'clearFir') this.engine.request('fir.clear', { output: this.out }).catch((err: Error) => alert(err.message));
+  }
+
+  private async importPreset(input: HTMLInputElement): Promise<void> {
+    const f = input.files?.[0];
+    input.value = '';
+    if (!f) return;
+    const name = prompt('Import as preset named', f.name.replace(/\.(vtpreset|json)$/i, ''));
+    if (!name) return;
+    try {
+      await this.engine.request('preset.import', { name, json: await f.text() });
+      this.presetSel = name;
+      await this.refreshPresets();
+    } catch (err) { alert((err as Error).message); }
   }
 
   private loadFir(input: HTMLInputElement): void {

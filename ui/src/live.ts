@@ -56,7 +56,8 @@ function renderStrips(s: SystemState): void {
     el.classList.toggle('sel', selected.has(i));
     el.querySelector('[data-f="name"]')!.textContent = o.name;
     const patch = el.querySelector<HTMLElement>('[data-f="patch"]')!;
-    patch.textContent = `→ ${channels.outLabel(o.channel)}`;
+    patch.textContent = `→ ${channels.outLabel(o.channel)}${o.preset ? ` · ${o.preset}` : ''}`;
+    patch.title = o.preset ? `speaker preset: ${o.preset}` : '';
     patch.classList.toggle('none', o.channel < 0);
     el.querySelector('[data-act="mute"]')!.classList.toggle('on', o.mute);
     el.querySelector('[data-act="pol"]')!.classList.toggle('on', o.polarityInvert);

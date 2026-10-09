@@ -55,6 +55,7 @@ struct OutputConfig
 {
     juce::String name, type = "full", colour = "#7fb2ff";
     int id = 0;       // stable identity (processing slot follows it); assigned when 0
+    juce::String preset; // speaker preset last applied (display only)
     int channel = -1; // physical output, -1 = unassigned (processed, silent)
     float gainDb = 0.0f;
     bool polarityInvert = false;

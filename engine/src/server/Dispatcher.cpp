@@ -9,7 +9,7 @@ juce::var object() { return juce::var(new juce::DynamicObject()); }
 void set(juce::var& o, const juce::Identifier& k, const juce::var& v) { o.getDynamicObject()->setProperty(k, v); }
 }
 
-Dispatcher::Dispatcher(AudioEngine& e, juce::File dataDir) : engine(e), snapshots(std::move(dataDir))
+Dispatcher::Dispatcher(AudioEngine& e, juce::File dataDir) : engine(e), snapshots(dataDir), presets(dataDir)
 {
     startTimer(250);
 }
@@ -118,6 +118,7 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "align.auto") return startAutoAlign(args["outputs"], args.hasProperty("reference") ? int(args["reference"]) : -1, err);
     if (cmd == "align.cancel") { if (alignJob.active) finishAlign("cancelled"); return true; }
     if (cmd == "matrix.run") return startMatrix(args, err);
+    if (cmd.startsWith("preset.")) return presetCommand(cmd, args, err);
     if (cmd == "matrix.cancel") { if (matrixJob.active) finishMatrix("cancelled"); return true; }
 
     if (cmd == "spl.calibrate") {
@@ -948,6 +949,66 @@ void Dispatcher::finishMatrix(const juce::String& error)
     engine.analyzer().reset();
     commit();
     emit("matrix", { { "stage", error.isEmpty() ? "done" : "error" }, { "message", error } });
+}
+
+} // namespace vt
+
+namespace vt {
+
+juce::var Dispatcher::presetCommand(const juce::String& cmd, const juce::var& args, juce::String& err)
+{
+    const auto name = args["name"].toString();
+    if (cmd == "preset.list") { juce::Array<juce::var> a; for (auto& n : presets.list()) a.add(n); return a; }
+    if (cmd == "preset.delete") { if (!presets.remove(name)) { err = "could not delete preset"; return {}; } return true; }
+    if (cmd == "preset.export") { auto j = presets.exportJson(name, err); if (err.isNotEmpty()) return {}; return j; }
+    if (cmd == "preset.import") { if (!presets.importJson(name, args["json"].toString(), err)) return {}; return true; }
+
+    if (cmd == "preset.save") {
+        const int o = int(args["output"]);
+        if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
+        SpeakerPreset p;
+        p.name = name;
+        p.processing = state.outputs[size_t(o)];
+        if (p.processing.fir.taps > 0 && p.processing.fir.path.isNotEmpty()) { // embed the FIR itself
+            juce::AudioBuffer<float> ir;
+            double fileSr = 0;
+            if (!FirLoader::load(juce::File(p.processing.fir.path), sampleRate(), ir, fileSr, err)) return {};
+            p.fir.assign(ir.getReadPointer(0), ir.getReadPointer(0) + ir.getNumSamples());
+            p.firSampleRate = fileSr;
+        }
+        if (!presets.save(p, err)) return {};
+        state.outputs[size_t(o)].preset = name;
+        commit();
+        return true;
+    }
+
+    if (cmd == "preset.apply") {
+        SpeakerPreset p;
+        if (!presets.load(name, p, err)) return {};
+        std::vector<int> outs;
+        if (const auto* a = args["outputs"].getArray()) for (auto& v : *a) outs.push_back(int(v));
+        for (int o : outs) if (o < 0 || o >= int(state.outputs.size())) { err = "invalid output"; return {}; }
+        const auto firPath = presets.materialiseFir(p, err);
+        if (err.isNotEmpty()) return {};
+        recordUndo("preset");
+        forceNewUndoStep();
+        SystemState next = state;
+        for (int o : outs) {
+            auto& out = next.outputs[size_t(o)];
+            Presets::applySpeakerFields(p.processing, out);
+            out.preset = p.name;
+            out.fir = {};
+            if (firPath.isNotEmpty()) { out.fir.path = firPath; out.fir.on = p.processing.fir.on; }
+        }
+        if (!replaceState(next, err, false)) return {};
+        // replaceState loads new FIR paths; mark them on, with taps/latency now known.
+        for (int o : outs)
+            if (firPath.isNotEmpty() && !loadFirFile(o, firPath, err)) return {};
+        commit();
+        return toVar(state);
+    }
+    err = "unknown command: " + cmd;
+    return {};
 }
 
 } // namespace vt

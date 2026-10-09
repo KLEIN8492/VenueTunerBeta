@@ -3,6 +3,7 @@
 #include "core/SystemState.h"
 #include "measure/MicCal.h"
 #include "server/Snapshots.h"
+#include "server/Presets.h"
 #include "measure/Align.h"
 #include <array>
 #include <map>
@@ -81,6 +82,8 @@ private:
 
     AudioEngine& engine;
     Snapshots snapshots;
+    Presets presets;
+    juce::var presetCommand(const juce::String& cmd, const juce::var& args, juce::String& error);
     SystemState state;
     MicCal micCal;
     bool autosavePending = false;

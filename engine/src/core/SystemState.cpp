@@ -68,6 +68,7 @@ juce::var outputToVar(const OutputConfig& o)
     d->setProperty("type", o.type);
     d->setProperty("colour", o.colour);
     d->setProperty("id", o.id);
+    d->setProperty("preset", o.preset);
     d->setProperty("channel", o.channel);
     d->setProperty("gainDb", o.gainDb);
     d->setProperty("polarityInvert", o.polarityInvert);
@@ -230,7 +231,7 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
     if (!v.isObject()) { err = ctx + "expected an object"; return false; }
     Reader r { v, ctx, err };
     return r.str("name", o.name) && r.str("type", o.type) && r.str("colour", o.colour)
-        && r.integer("id", o.id, 0, 1 << 30)
+        && r.integer("id", o.id, 0, 1 << 30) && r.str("preset", o.preset)
         && r.integer("channel", o.channel, -1, kMaxCh - 1)
         && r.num("gainDb", o.gainDb, -80, 12) && r.boolean("polarityInvert", o.polarityInvert)
         && r.num("delayMs", o.delayMs, 0, 1000) && r.boolean("mute", o.mute)

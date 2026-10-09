@@ -13,6 +13,7 @@ export interface SourceConfig { name: string; type: SourceType; channel: number 
 export interface OutputConfig {
   name: string; type: string; colour: string;
   channel: number; // physical output, -1 = unassigned
+  preset?: string;  // speaker preset last applied
   gainDb: number; polarityInvert: boolean; delayMs: number; mute: boolean;
   limiterOn: boolean; limThreshDb: number; limAttackMs: number; limReleaseMs: number;
   mix: number[];
