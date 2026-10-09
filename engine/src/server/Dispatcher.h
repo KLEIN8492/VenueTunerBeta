@@ -69,6 +69,11 @@ private:
     void tickSweep();
     void tickAlign();
     void finishAlign(const juce::String& error);
+    juce::var startMatrix(const juce::var& args, juce::String& error);
+    void tickMatrix();
+    void finishMatrix(const juce::String& error);
+    juce::var traceVar(const Analyzer::Result&, const juce::String& name) const;
+    std::pair<double, double> groupBand(const MeasureGroup&) const;
     void emit(const juce::String& event, std::initializer_list<std::pair<const char*, juce::var>> fields);
     juce::String preflight(); // why automatic measurement can't run now, or empty
     void applyTransient(Params&) const; // sweep / auto-align generator overrides
@@ -117,6 +122,17 @@ private:
         std::vector<Arrival> arrivals;
         juce::String beforeName;
     } alignJob;
+
+    // Sequenced measurement: each group alone at the current mic position.
+    struct Matrix
+    {
+        bool active = false;
+        int position = 0;
+        std::vector<int> groups;
+        size_t index = 0;
+        int ticks = 0, stable = 0, settledTicks = -1, attempt = 0;
+        double last = -1;
+    } matrixJob;
 };
 
 } // namespace vt

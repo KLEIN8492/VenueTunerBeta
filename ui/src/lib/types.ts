@@ -24,7 +24,8 @@ export interface SystemState {
   sources: SourceConfig[];
   outputs: OutputConfig[];
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
-  measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean };
+  measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean;
+             positions: string[]; groups: { name: string; outputs: number[] }[] };
   cal: { ioLatency: Record<string, number>; micCalPath: string; splOffset: Record<string, number> };
 }
 
@@ -33,7 +34,7 @@ export interface Status {
   inputDevice: string; outputDevice: string; sampleRate: number; bufferSize: number;
   numIn: number; numOut: number; cpu: number; xruns: number; callbacks: number;
   running: boolean; faultMuted: boolean; muteAll: boolean; error: string;
-  sweeping: boolean; aligning: boolean; canUndo: number; canRedo: number;
+  sweeping: boolean; aligning: boolean; matrixRunning: boolean; canUndo: number; canRedo: number;
   spl: { fast: number[]; slow: number[]; leq: number[]; peak: number; leqSeconds: number; calibrated: boolean }; // [Z, A, C]
   driverLatency: number; ioLatency: number; ioLatencyCalibrated: boolean; calibrating: boolean;
   inPeak: number[]; outPeak: number[]; limGr: number[];
@@ -43,4 +44,5 @@ export interface Trace {
   name: string; freq: number[]; mag: number[]; phase: number[]; coh: number[];
   delaySamples: number; sampleRate: number;
   outputs?: OutputConfig[]; // processing at capture time, for "predicted after EQ"
+  group?: string; position?: string; quality?: number; // from a sequenced (matrix) capture
 }

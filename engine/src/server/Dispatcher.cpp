@@ -1,5 +1,6 @@
 #include "server/Dispatcher.h"
 #include "dsp/FirLoader.h"
+#include "measure/Quality.h"
 
 namespace vt {
 
@@ -110,21 +111,14 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "measure.capture") {
         const auto r = engine.analyzer().result();
         if (r.frames == 0) { err = "no measurement data yet"; return {}; }
-        auto t = object();
-        set(t, "name", args["name"].toString());
-        auto toArr = [](const std::vector<float>& v) { juce::Array<juce::var> a; for (float x : v) a.add(x); return juce::var(a); };
-        set(t, "freq", toArr(r.freq));
-        set(t, "mag", toArr(r.magDb));
-        set(t, "phase", toArr(r.phaseDeg));
-        set(t, "coh", toArr(r.coherence));
-        set(t, "delaySamples", r.delaySamples);
-        set(t, "sampleRate", r.sampleRate);
-        return t;
+        return traceVar(r, args["name"].toString());
     }
 
     if (cmd == "measure.sweep") return startSweep(args.hasProperty("seconds") ? double(args["seconds"]) : 3.0, err);
     if (cmd == "align.auto") return startAutoAlign(args["outputs"], args.hasProperty("reference") ? int(args["reference"]) : -1, err);
     if (cmd == "align.cancel") { if (alignJob.active) finishAlign("cancelled"); return true; }
+    if (cmd == "matrix.run") return startMatrix(args, err);
+    if (cmd == "matrix.cancel") { if (matrixJob.active) finishMatrix("cancelled"); return true; }
 
     if (cmd == "spl.calibrate") {
         const int mic = state.measure.micSource;
@@ -365,6 +359,7 @@ void Dispatcher::finishCalibration(bool ok, double samples, const juce::String& 
 void Dispatcher::timerCallback()
 {
     if (sweepJob.active) tickSweep();
+    if (matrixJob.active) tickMatrix();
     if (alignJob.active) tickAlign();
     if (calib.active) {
         ++calib.ticks;
@@ -430,6 +425,7 @@ juce::var Dispatcher::statusVar()
     set(v, "canUndo", int(undoStack.size()));
     set(v, "canRedo", int(redoStack.size()));
     set(v, "aligning", alignJob.active);
+    set(v, "matrixRunning", matrixJob.active);
     juce::Array<juce::var> inPk, outPk, gr;
     for (int c = 0; c < st.numIn; ++c) inPk.add(st.inPeak[size_t(c)]);
     // Meters per output (in output order), read from each output's slot.
@@ -464,7 +460,7 @@ juce::String Dispatcher::preflight()
     if (st.faultMuted || st.muteAll) return "outputs are muted: unmute first";
     const int mic = state.measure.micSource;
     if (mic < 0 || state.sources[size_t(mic)].channel < 0) return "choose a measurement mic (a patched source) first";
-    if (calib.active || sweepJob.active || alignJob.active) return "another automatic measurement is running";
+    if (calib.active || sweepJob.active || alignJob.active || matrixJob.active) return "another automatic measurement is running";
     return {};
 }
 
@@ -483,6 +479,13 @@ void Dispatcher::applyTransient(Params& p) const
         p.gen.mode = GeneratorParams::Sweep;
         p.gen.sweepId = sweepJob.id;
         p.gen.sweepLength = sweepJob.length;
+    }
+    if (matrixJob.active && matrixJob.index < matrixJob.groups.size()) {
+        p.gen.on = true;
+        p.gen.mode = GeneratorParams::Pink;
+        p.gen.targets = 0;
+        for (int o : state.measure.groups[size_t(matrixJob.groups[matrixJob.index])].outputs)
+            if (o >= 0 && o < kMaxCh) p.gen.targets |= 1ull << o;
     }
     if (alignJob.active && alignJob.index < alignJob.outputs.size()) {
         p.gen.on = true;
@@ -840,6 +843,111 @@ juce::var Dispatcher::stepHistory(bool undo, juce::String& err)
     forceNewUndoStep();
     if (!replaceState(next, err, true)) return {};
     return toVar(state);
+}
+
+} // namespace vt
+
+namespace vt {
+
+juce::var Dispatcher::traceVar(const Analyzer::Result& r, const juce::String& name) const
+{
+    auto toArr = [](const std::vector<float>& v) { juce::Array<juce::var> a; for (float x : v) a.add(x); return juce::var(a); };
+    auto t = object();
+    set(t, "name", name);
+    set(t, "freq", toArr(r.freq));
+    set(t, "mag", toArr(r.magDb));
+    set(t, "phase", toArr(r.phaseDeg));
+    set(t, "coh", toArr(r.coherence));
+    set(t, "delaySamples", r.delaySamples);
+    set(t, "sampleRate", r.sampleRate);
+    return t;
+}
+
+// Frequency range a group actually covers, from its outputs' crossovers: a sub is judged on
+// its own band, not on 10 kHz where it (correctly) has no coherence.
+std::pair<double, double> Dispatcher::groupBand(const MeasureGroup& g) const
+{
+    double lo = 1e9, hi = 0;
+    for (int o : g.outputs) {
+        if (o < 0 || o >= int(state.outputs.size())) continue;
+        const auto& out = state.outputs[size_t(o)];
+        lo = std::min(lo, out.hp.type != "off" ? double(out.hp.freq) : 40.0);
+        hi = std::max(hi, out.lp.type != "off" ? double(out.lp.freq) : 12000.0);
+    }
+    if (hi <= 0) return { 100.0, 10000.0 };
+    return { std::max(25.0, lo * 1.2), std::max(lo * 1.5, hi * 0.8) };
+}
+
+juce::var Dispatcher::startMatrix(const juce::var& args, juce::String& err)
+{
+    if (err = preflight(); err.isNotEmpty()) return {};
+    const int pos = int(args["position"]);
+    if (pos < 0 || pos >= int(state.measure.positions.size())) { err = "choose a mic position"; return {}; }
+    std::vector<int> groups;
+    if (const auto* a = args["groups"].getArray()) for (auto& g : *a) groups.push_back(int(g));
+    else for (int g = 0; g < int(state.measure.groups.size()); ++g) groups.push_back(g);
+    std::vector<int> valid;
+    for (int g : groups)
+        if (g >= 0 && g < int(state.measure.groups.size()) && !state.measure.groups[size_t(g)].outputs.empty()) valid.push_back(g);
+    if (valid.empty()) { err = "no measurement groups with outputs: create them first"; return {}; }
+    matrixJob = {};
+    matrixJob.active = true;
+    matrixJob.position = pos;
+    matrixJob.groups = valid;
+    engine.analyzer().reset();
+    commit();
+    emit("matrix", { { "stage", "measuring" }, { "group", valid[0] }, { "position", pos } });
+    return "started";
+}
+
+void Dispatcher::tickMatrix()
+{
+    auto& j = matrixJob;
+    ++j.ticks;
+    const auto r = engine.analyzer().result();
+    if (r.delayValid && j.ticks > 4) {
+        j.stable = std::abs(r.delaySamples - j.last) < 0.5 ? j.stable + 1 : 0;
+        j.last = r.delaySamples;
+        if (j.stable >= 3 && j.settledTicks < 0) j.settledTicks = j.ticks; // arrival stable: start averaging
+    }
+    const int group = j.groups[j.index];
+    const auto& g = state.measure.groups[size_t(group)];
+    const bool averaged = j.settledTicks >= 0 && j.ticks - j.settledTicks >= 12; // + 3 s of averaging
+    const bool timedOut = j.ticks > 72;                                           // 18 s per attempt
+    if (!averaged && !timedOut) return;
+
+    const auto [lo, hi] = groupBand(g);
+    const double q = captureQuality(r, lo, hi);
+    const bool ok = averaged && captureAccepted(r, lo, hi);
+    auto next = [&] {
+        j.ticks = j.stable = 0;
+        j.settledTicks = -1;
+        j.last = -1;
+        engine.analyzer().reset();
+    };
+    if (!ok && j.attempt == 0) { // disturbed or no arrival: one more try
+        j.attempt = 1;
+        emit("matrix", { { "stage", "retry" }, { "group", group }, { "position", j.position }, { "quality", q } });
+        next();
+        return;
+    }
+    const auto name = g.name + " @ " + state.measure.positions[size_t(j.position)];
+    if (ok) emit("matrix", { { "stage", "captured" }, { "group", group }, { "position", j.position }, { "quality", q }, { "trace", traceVar(r, name) } });
+    else emit("matrix", { { "stage", "rejected" }, { "group", group }, { "position", j.position }, { "quality", q },
+                          { "message", r.delayValid ? "low coherence: noise in the room or source too quiet" : "no clear arrival: check the mic and the speaker" } });
+    j.attempt = 0;
+    if (++j.index >= j.groups.size()) { finishMatrix({}); return; }
+    next();
+    commit(); // generator moves to the next group
+    emit("matrix", { { "stage", "measuring" }, { "group", j.groups[j.index] }, { "position", j.position } });
+}
+
+void Dispatcher::finishMatrix(const juce::String& error)
+{
+    matrixJob.active = false;
+    engine.analyzer().reset();
+    commit();
+    emit("matrix", { { "stage", error.isEmpty() ? "done" : "error" }, { "message", error } });
 }
 
 } // namespace vt

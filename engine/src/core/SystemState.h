@@ -77,8 +77,17 @@ struct GeneratorConfig
     std::vector<int> targets;
 };
 
+// Outputs played together during a sequenced measurement (e.g. "Subs" = outputs 3 and 4).
+struct MeasureGroup
+{
+    juce::String name;
+    std::vector<int> outputs; // indices into outputs
+};
+
 struct MeasureConfig
 {
+    std::vector<juce::String> positions; // mic positions ("FOH", "Front"...)
+    std::vector<MeasureGroup> groups;
     int micSource = -1;             // index into sources
     juce::String ref = "generator"; // generator (internal loopback) | source
     int refSource = -1;

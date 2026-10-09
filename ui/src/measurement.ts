@@ -8,6 +8,7 @@ import { coherenceAlpha } from './lib/coherence';
 import { samplesToMs, SPEED_OF_SOUND } from './lib/scale';
 import type { SystemState, Trace } from './lib/types';
 import { mountAutoEq, mountXoAlign } from './lib/tunepanels';
+import { mountMatrix } from './lib/matrixpanel';
 
 const engine = connectFromLocation();
 installUndo(engine);
@@ -101,7 +102,7 @@ engine.on('ir', (f) => {
 // ---------------------------------------------------------------- side panel
 const side = $('side');
 side.innerHTML = `
-  <div class="sidetabs" id="sideTabs"><button data-st="measure" class="on">Measure</button><button data-st="autoeq">Auto-EQ</button><button data-st="align">Align</button><button data-st="room">Room</button></div>
+  <div class="sidetabs" id="sideTabs"><button data-st="measure" class="on">Measure</button><button data-st="matrix">Matrix</button><button data-st="autoeq">Auto-EQ</button><button data-st="align">Align</button><button data-st="room">Room</button></div>
   <div data-sp="measure">
   <h2>Sound level</h2>
   <div class="row"><span id="splVal" class="big">—</span><span id="splUnit" class="dim grow"></span><span id="splPeak" class="dim"></span></div>
@@ -140,6 +141,7 @@ side.innerHTML = `
     <input id="importFile" type="file" accept=".txt,.csv,.frd,.dat" multiple hidden/></div>
   <div class="dim" style="margin-top:8px">Wheel: move magnitude range · double-click: reset · G: generator</div>
   </div>
+  <div data-sp="matrix" hidden></div>
   <div data-sp="autoeq" hidden></div>
   <div data-sp="room" hidden>
     <h2>Room acoustics (RT60)</h2>
@@ -174,6 +176,17 @@ const tuneCtx = {
 };
 mountAutoEq(side.querySelector<HTMLElement>('[data-sp=autoeq]')!, tuneCtx);
 mountXoAlign($('xoAlign'), tuneCtx);
+mountMatrix(side.querySelector<HTMLElement>('[data-sp=matrix]')!, {
+  ...tuneCtx,
+  // A re-measured cell replaces its previous capture (same "<group> @ <position>" name).
+  putTrace: (t, extra) => {
+    const i = traces.findIndex((x) => x.name === t.name);
+    const stored = { ...t, ...extra, outputs: engine.state?.outputs, color: i >= 0 ? traces[i].color : PALETTE[traces.length % PALETTE.length], visible: true };
+    if (i >= 0) traces[i] = stored; else traces.push(stored);
+    renderTraces();
+  },
+  showOnly: (names) => { traces.forEach((t) => (t.visible = names.includes(t.name))); renderTraces(); },
+});
 
 const opt = (v: string | number, label: string, sel: boolean) => `<option value="${v}"${sel ? ' selected' : ''}>${esc(label)}</option>`;
 const report = (p: Promise<unknown>) => p.catch((e: Error) => alert(e.message));

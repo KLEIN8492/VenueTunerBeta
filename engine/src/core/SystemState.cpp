@@ -35,6 +35,12 @@ void SystemState::removeOutput(int index)
 {
     if (index < 0 || index >= int(outputs.size())) return;
     outputs.erase(outputs.begin() + index);
+    for (auto& g : measure.groups) {
+        std::vector<int> kept;
+        for (int o : g.outputs)
+            if (o != index) kept.push_back(o > index ? o - 1 : o);
+        g.outputs = kept;
+    }
     std::vector<int> t;
     for (int x : gen.targets)
         if (x != index) t.push_back(x > index ? x - 1 : x);
@@ -349,6 +355,16 @@ juce::var toVar(const SystemState& s)
     m.getDynamicObject()->setProperty("averaging", s.measure.averaging);
     m.getDynamicObject()->setProperty("smoothing", s.measure.smoothing);
     m.getDynamicObject()->setProperty("multiWindow", s.measure.multiWindow);
+    juce::Array<juce::var> pos, groups;
+    for (auto& p : s.measure.positions) pos.add(p);
+    for (auto& g : s.measure.groups) {
+        auto x = obj();
+        x.getDynamicObject()->setProperty("name", g.name);
+        x.getDynamicObject()->setProperty("outputs", arr(g.outputs));
+        groups.add(x);
+    }
+    m.getDynamicObject()->setProperty("positions", pos);
+    m.getDynamicObject()->setProperty("groups", groups);
     r->setProperty("measure", m);
 
     auto c = obj();
@@ -404,6 +420,13 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
         if (!(r.integer("averaging", s.measure.averaging, 1, 256)
               && r.integer("smoothing", s.measure.smoothing, 0, 48)
               && r.boolean("multiWindow", s.measure.multiWindow))) return false;
+        if (const auto* pa = v["measure"]["positions"].getArray()) {
+            if (pa->size() > 64) { err = "measure/positions: at most 64"; return false; }
+            for (auto& p : *pa) s.measure.positions.push_back(p.toString());
+        }
+        if (!objects(v["measure"], "groups", s.measure.groups, 64, "measure/", err, [](Reader& g, MeasureGroup& x) {
+                return g.str("name", x.name) && g.list("outputs", x.outputs, 0, kMaxOutputs - 1);
+            })) return false;
     }
     if (v.hasProperty("cal")) {
         const auto& c = v["cal"];
@@ -438,6 +461,12 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
         bool dup = s.outputs[a].id <= 0;
         for (size_t b = 0; b < a && !dup; ++b) dup = s.outputs[b].id == s.outputs[a].id;
         if (dup) s.outputs[a].id = nextId++;
+    }
+    for (auto& g : s.measure.groups) { // drop members that don't exist (any more)
+        std::vector<int> kept;
+        for (int o : g.outputs)
+            if (o < int(s.outputs.size())) kept.push_back(o);
+        g.outputs = kept;
     }
     std::vector<int> targets;
     for (int t : s.gen.targets)

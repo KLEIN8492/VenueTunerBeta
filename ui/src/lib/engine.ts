@@ -30,6 +30,8 @@ type Events = {
   align: { stage: 'measuring' | 'measured' | 'done' | 'error'; output?: number; arrivalMs?: number;
            delays?: { output: number; delayMs: number }[]; snapshot?: string; message?: string };
   error: { message: string };
+  matrix: { stage: 'measuring' | 'retry' | 'captured' | 'rejected' | 'done' | 'error'; group?: number; position?: number;
+            quality?: number; trace?: import('./types').Trace; message?: string };
   open: void; close: void;
 };
 type Listener<T> = (v: T) => void;
