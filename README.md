@@ -69,13 +69,13 @@ Settings, snapshots and calibration live in `~/Library/Application Support/Venue
    the other speaker and press *Align to ref* on its output.
 4. **Auto-tuning** (Measurement window, sidebar tabs):
    - **Auto-EQ**: capture one or more mic positions of an output (generator on that output only),
-     pick a target (flat, tilt, house curve) and Compute. The yellow curve is the predicted result;
+     pick a target (flat, tilt, house curve) and Compute (several positions are level-matched first). The yellow curve is the predicted result;
      Apply replaces that output's PEQ with ordinary bands (cuts preferred, combined boost ≤ +3 dB,
      narrow dips and low-coherence regions left alone). A "Before auto-EQ" snapshot is saved.
    - **Align**: capture the top alone and the sub alone from the same position; Compute finds the
      delay and polarity that sum best around the crossover (using phase). Apply sets them.
 5. **Sound level, RTA, room** (Measurement window):
-   - **Sound level** in dB SPL: A/C/Z × Fast/Slow/Impulse, Leq over 1 s … 15 min or since reset,
+   - **Sound level** in dB SPL: A/C/Z × Fast/Slow/Impulse, Leq over 1 s … 15 min or since reset (own feed: automatic measurements never touch it),
      LCpeak, max; refresh 1–10×/s. Until a mic is calibrated the value is shown as an estimate (≈,
      ±10 dB). **Calibrate…** offers: calibrator (most accurate), match a reference meter (type what
      Smaart / an SPL meter reads), or datasheet values (mic mV/Pa, interface dBu at 0 dBFS, gain).
@@ -88,7 +88,7 @@ Settings, snapshots and calibration live in `~/Library/Application Support/Venue
    - **Traces → Import…**: REW / Smaart / VenueTuner text exports, to compare with old measurements.
 6. **Matrix** (Measurement window): define groups (outputs played together) and mic positions.
    Put the mic at a position and press ▶: each group plays alone, is captured, quality-checked
-   (retried once if disturbed) and labelled "Group @ Position". Move the mic, repeat. "avg" averages
+   (retried once if disturbed, rejected if a limiter worked) and labelled "Group @ Position". Move the mic, repeat. "avg" averages
    a group over all positions for Auto-EQ. One mic is enough; with several mics, give each position
    its own mic and press "▶ All positions with a mic" to capture them all from one burst.
 7. **Speaker presets** (EQ editor in Live): save an output's speaker processing (crossover, EQ,
@@ -98,7 +98,8 @@ Settings, snapshots and calibration live in `~/Library/Application Support/Venue
    tuned, and give each output its distance to the audience. As the air changes, a high shelf
    restores the HF the air absorbs (ISO 9613-1).
 9. **Interface latency**: the driver-reported value is used automatically. For precision,
-   cable an output to an input and run *Calibrate* in Settings once per device/rate/buffer.
+   cable an output to an input and run *Calibrate* in Settings once per device/rate/buffer
+   (that output's processing is bypassed while it measures).
 
 Snapshots store the patch (inputs, outputs, channels), routing and all processing. Recalling one
 made on another interface asks you to remap each input/output to the current channels.
@@ -114,7 +115,7 @@ Data (autosave, snapshots) lives in `~/Library/Application Support/VenueTuner`.
 
 ## Performance
 
-16 outputs, each with 16 PEQ bands + LR24 HP + LR48 LP + 4 all-pass (28 IIR sections), at
+16 outputs, each with 16 PEQ bands + LR24 HP + LR48 LP + 4 all-pass (up to 8 sections: LR48-matched uses two), at
 48 kHz / 64 samples: about **4 % of one Apple Silicon core** (≈ 0.25 % per fully loaded output).
 `engine/build/vt_tests "[.bench]"` runs the benchmark.
 

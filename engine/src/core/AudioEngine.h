@@ -5,6 +5,7 @@
 #include "dsp/PinkNoise.h"
 #include "dsp/SweepGen.h"
 #include "measure/Analyzer.h"
+#include "measure/MicMeters.h"
 #include "rt/TripleBuffer.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
@@ -50,6 +51,12 @@ public:
     void unmuteAfterFault() { faultMuted.store(false); }
     Status status(); // also resets peak holds
     Analyzer& analyzer() { return analyzerImpl; }
+    // Sound level meter and RTA of the measurement mic (own feed, see MicMeters).
+    MicMeters& micMeters() { return meters; }
+    SplMeter& spl() { return meters.spl(); }
+    Rta& rta() { return meters.rta(); }
+    // Worst limiter gain reduction (dB, ≤ 0) of a processing slot since the last call.
+    float takeJobLimiting(int slot) { return slot >= 0 && slot < kMaxCh ? chains[size_t(slot)].takeJobGainReductionDb() : 0.0f; }
     // Analyzer for mic slot k: 0 = main mic, 1… = extra mics (nullptr if not created yet).
     Analyzer* analyzerForSlot(int k) { return k == 0 ? &analyzerImpl : (k > 0 && k < kMaxMics ? extra[size_t(k - 1)].load() : nullptr); }
 
@@ -81,6 +88,7 @@ private:
         {
             while (!threadShouldExit()) {
                 engine.analyzerImpl.process();
+                engine.meters.process();
                 for (auto& a : engine.extra)
                     if (auto* an = a.load()) an->process();
                 wait(10);
@@ -110,6 +118,7 @@ private:
     std::atomic<int64_t> callbackCount { 0 };
     std::array<std::atomic<float>, kMaxCh> inPeak {};
     Analyzer analyzerImpl;
+    MicMeters meters;
     std::array<std::atomic<Analyzer*>, kMaxMics - 1> extra {};
     std::vector<std::unique_ptr<Analyzer>> extraStorage;
     AnalysisThread analysisThread { *this };

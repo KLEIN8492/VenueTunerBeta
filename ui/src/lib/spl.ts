@@ -65,7 +65,7 @@ export function openCalibration(engine: Engine): void {
     <div class="row"><span class="dim grow">Put the calibrator on the mic, switch it on, then:</span>
       <input id="calLvl" type="number" value="94" step="0.1" style="width:60px"/><span class="dim">dB</span><button id="calDo">Calibrate</button></div>
     <h2>2 · Match a reference meter</h2>
-    <div class="row"><span class="dim grow">Play pink noise; type what the other meter (Smaart, SPL meter…) reads, Slow:</span></div>
+    <div class="row"><span class="dim grow">Play steady pink noise for at least 10 s, both mics side by side. Type the other meter's (Smaart, SPL meter…) 10 s Leq, or its average Slow reading:</span></div>
     <div class="row"><input id="refLvl" type="number" step="0.1" placeholder="96.4" style="width:70px"/><span class="dim">dB</span>
       <select id="refW"><option value="1">A</option><option value="2">C</option><option value="0">Z</option></select><button id="refDo">Match</button></div>
     <h2>3 · From datasheets (estimate, ±3 dB)</h2>

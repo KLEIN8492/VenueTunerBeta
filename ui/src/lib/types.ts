@@ -3,7 +3,10 @@
 export type PeqType = 'bell' | 'lowshelf' | 'highshelf' | 'notch' | 'lowpass' | 'highpass';
 export type XoType = 'off' | 'bw6' | 'bw12' | 'bw18' | 'bw24' | 'bw36' | 'bw48' | 'lr12' | 'lr24' | 'lr48';
 export interface PeqBand { on: boolean; type: PeqType; freq: number; gainDb: number; q: number }
-export interface ApBand { on: boolean; order: 1 | 2; freq: number; q: number }
+// All-pass: no level change, only phase. "Slope" = phase order: 1st turns 180°, 2nd 360° (Q sets
+// how fast), LR24/LR48-matched copy the phase of that crossover (for aligning a path that has none).
+export type ApType = '1st' | '2nd' | 'lr24' | 'lr48';
+export interface ApBand { on: boolean; order: 1 | 2; type?: ApType; freq: number; q: number }
 export interface XoConfig { type: XoType; freq: number }
 export interface FirConfig { on: boolean; path: string; taps: number; latencySamples: number }
 
@@ -26,7 +29,7 @@ export interface SystemState {
   sources: SourceConfig[];
   outputs: OutputConfig[];
   gen: { on: boolean; signal: string; levelDb: number; targets: number[] };
-  measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; multiWindow: boolean;
+  measure: { micSource: number; ref: 'generator' | 'source'; refSource: number; averaging: number; smoothing: number; phaseSmoothing?: number; multiWindow: boolean;
              positions: string[]; positionMics: number[]; groups: { name: string; outputs: number[] }[] };
   limits: { enabled: boolean; laeq15: number; lceq15: number };
   air: { enabled: boolean; tempC: number; humidity: number; pressureKPa: number; refTempC: number; refHumidity: number };
@@ -42,9 +45,11 @@ export interface Status {
   // Sound level of the main mic, in dB SPL (offset applied). Arrays are [Z, A, C].
   spl: { fast: number[]; slow: number[]; impulse: number[]; leq: number[]; max: number[]; leqWindows: number[][];
          peak: number; cPeak: number; leqSeconds: number; calibrated: boolean;
-         method: 'calibrator' | 'reference' | 'estimate' | 'default'; offset: number; micDbfs: number };
+         method: 'calibrator' | 'reference' | 'estimate' | 'default'; offset: number; micDbfs: number;
+         gapSeconds: number }; // audio that never reached the Leq (analysis overload) since reset
   levels: { ref: number; mic: number }; // dBFS RMS, for gain matching
   driverLatency: number; ioLatency: number; ioLatencyCalibrated: boolean; calibrating: boolean;
+  warning: string; // measurement setup problem the engine can see (e.g. separate input/output clocks)
   inPeak: number[]; outPeak: number[]; limGr: number[];
 }
 

@@ -3,6 +3,7 @@
 // (same mic position). Uses absolute phase: each trace's phase plus its own arrival time.
 export interface PhaseTrace {
   freq: ArrayLike<number>; mag: ArrayLike<number>; phase: ArrayLike<number>;
+  coh?: ArrayLike<number>; // when given, points weigh by the lower of the two coherences
   delaySamples: number; sampleRate: number;
 }
 
@@ -29,6 +30,8 @@ export function alignPair(A: PhaseTrace, B: PhaseTrace, fLo: number, fHi: number
   const f = Array.from(A.freq);
   const a = absolute(A), b = absolute(B);
   const band = f.map((x) => x >= fLo && x <= fHi);
+  // A point where either measurement is unreliable (noise, a reflection) must not pick the delay.
+  const weight = f.map((_, i) => Math.min(A.coh ? A.coh[i] : 1, B.coh ? B.coh[i] : 1));
 
   const sumAt = (i: number, tauS: number, sign: number): C => {
     const ph = -2 * Math.PI * f[i] * tauS;
@@ -37,7 +40,7 @@ export function alignPair(A: PhaseTrace, B: PhaseTrace, fLo: number, fHi: number
   };
   const energy = (tauS: number, sign: number) => {
     let e = 0;
-    for (let i = 0; i < f.length; i++) if (band[i]) { const s = sumAt(i, tauS, sign); e += s.re * s.re + s.im * s.im; }
+    for (let i = 0; i < f.length; i++) if (band[i]) { const s = sumAt(i, tauS, sign); e += weight[i] * (s.re * s.re + s.im * s.im); }
     return e;
   };
 

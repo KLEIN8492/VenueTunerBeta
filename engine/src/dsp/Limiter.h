@@ -24,6 +24,8 @@ public:
 
     float process(float x)
     {
+        if (!std::isfinite(x)) return 0.0f;
+        if (!std::isfinite(gain)) gain = 1.0f;
         if (!enabled) { gain = 1.0f; return x; }
         const float a = std::abs(x);
         const float want = a > threshold ? threshold / a : 1.0f;

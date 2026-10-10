@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <string>
 #include <vector>
 
 namespace vt {
@@ -147,6 +148,21 @@ inline std::vector<Biquad> linkwitzRiley(int n, bool highpass, double f, double 
         twice[0] = { a.b0 * a.b0, 2 * a.b0 * a.b1, a.b1 * a.b1, 2 * a.a1, a.a1 * a.a1 };
     }
     return twice;
+}
+
+// All-pass by type: "1st" (90° at f, 180° total — the phase of a 6 dB/oct crossover),
+// "2nd" (180° at f, Q sets how fast it turns), and crossover-matched "lr24" / "lr48": the exact
+// phase of a Linkwitz-Riley 24 / 48 dB/oct crossover sum (half the order, Butterworth poles).
+inline std::vector<Biquad> allpassMatched(const std::string& type, double f, double sr, double q = 0.707)
+{
+    if (type == "1st") return { allpass1(f, sr) };
+    if (type == "lr24") return { allpass2(f, 1.0 / std::sqrt(2.0), sr) };
+    if (type == "lr48") {
+        std::vector<Biquad> s;
+        for (int k = 1; k <= 2; ++k) s.push_back(allpass2(f, 1.0 / (2.0 * std::cos(M_PI * (2 * k - 1) / 8.0)), sr));
+        return s;
+    }
+    return { allpass2(f, q, sr) };
 }
 
 inline std::vector<Biquad> crossover(XoType t, bool highpass, double f, double sr)

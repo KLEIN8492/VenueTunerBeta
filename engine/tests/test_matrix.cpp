@@ -15,7 +15,7 @@ static vt::Analyzer::Result result(float coh)
         r.coherence.push_back(r.freq.back() < 100 || r.freq.back() > 10000 ? 0.1f : coh);
     }
     r.delayValid = true;
-    r.frames = 32;
+    r.frames = r.effectiveFrames = 32;
     return r;
 }
 
@@ -27,6 +27,27 @@ TEST_CASE("Capture quality: mean coherence over the useful band, accept threshol
     auto r = result(0.95f);
     r.delayValid = false;
     CHECK_FALSE(vt::captureAccepted(r, 100, 10000)); // no arrival: never accepted
+    r = result(1.0f);
+    r.effectiveFrames = 2; // averaging just restarted: coherence still means nothing
+    CHECK_FALSE(vt::captureAccepted(r, 100, 10000));
+}
+
+TEST_CASE("Arrival vote: three new estimates must agree, a stray one is outvoted")
+{
+    vt::ArrivalVote v;
+    vt::Analyzer::Result r;
+    r.delayValid = true;
+    double d = 0;
+    auto feed = [&](int estimate, double samples) { r.delayEstimates = estimate; r.delaySamples = samples; return v.add(r); };
+    CHECK(feed(1, 480.0));
+    CHECK_FALSE(feed(1, 480.0)); // same run read twice: not a new estimate
+    CHECK(feed(2, 912.0));       // a reflection won once
+    CHECK(feed(3, 480.1));
+    CHECK_FALSE(v.agreed(1.0, d));
+    CHECK(feed(4, 480.05));
+    CHECK(feed(5, 480.0));
+    REQUIRE(v.agreed(1.0, d));
+    CHECK_THAT(d, WithinAbs(480.05, 1e-9));
 }
 
 TEST_CASE("Measurement groups and positions round-trip and validate")

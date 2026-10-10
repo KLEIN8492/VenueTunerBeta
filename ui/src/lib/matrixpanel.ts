@@ -4,6 +4,7 @@
 // With several mics, give positions their own mic and press "▶ All": every position is
 // captured at once from the same burst of pink noise.
 import { esc } from './statusbar';
+import { spatialAverage } from './average';
 import type { Engine } from './engine';
 import type { StoredTrace } from './tunepanels';
 import type { SystemState, Trace } from './types';
@@ -138,12 +139,9 @@ export function mountMatrix(el: HTMLElement, ctx: MatrixCtx): void {
     if (!s) return;
     const ts = s.measure.positions.map((_, pi) => traceFor(s, gi, pi)).filter((t): t is StoredTrace => !!t);
     if (!ts.length) return alert('Measure this group at one or more positions first.');
-    const n = ts[0].freq.length;
     const avg: StoredTrace = {
-      ...ts[0], position: undefined, quality: undefined, // an average belongs to no single position
-      name: `${s.measure.groups[gi].name} AVG (${ts.length})`,
-      mag: Array.from({ length: n }, (_, i) => 10 * Math.log10(ts.reduce((a, t) => a + Math.pow(10, t.mag[i] / 10), 0) / ts.length)),
-      coh: Array.from({ length: n }, (_, i) => Math.min(...ts.map((t) => t.coh[i]))),
+      ...spatialAverage(ts, `${s.measure.groups[gi].name} AVG (${ts.length})`)!,
+      position: undefined, quality: undefined, // an average belongs to no single position
     };
     ctx.putTrace(avg, { group: s.measure.groups[gi].name });
     ctx.showOnly([avg.name]);

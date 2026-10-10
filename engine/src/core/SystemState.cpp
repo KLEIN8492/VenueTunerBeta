@@ -111,6 +111,7 @@ juce::var outputToVar(const OutputConfig& o)
         auto x = obj();
         x.getDynamicObject()->setProperty("on", b.on);
         x.getDynamicObject()->setProperty("order", b.order);
+        x.getDynamicObject()->setProperty("type", b.type);
         x.getDynamicObject()->setProperty("freq", b.freq);
         x.getDynamicObject()->setProperty("q", b.q);
         ap.add(x);
@@ -261,8 +262,12 @@ bool outputFromVar(const juce::var& v, OutputConfig& o, const juce::String& ctx,
                    && b.num("gainDb", p.gainDb, -30, 15) && b.num("q", p.q, 0.1, 30);
            })
         && objects(v, "ap", o.ap, kMaxAp, ctx, err, [&](Reader& b, ApBand& p) {
-               return b.boolean("on", p.on) && b.integer("order", p.order, 1, 2) && b.num("freq", p.freq, 10, 24000)
-                   && b.num("q", p.q, 0.1, 10);
+               const bool hasType = b.v.hasProperty("type");
+               const bool ok = b.boolean("on", p.on) && b.integer("order", p.order, 1, 2) && b.num("freq", p.freq, 10, 24000)
+                   && b.num("q", p.q, 0.1, 10) && b.str("type", p.type, { "1st", "2nd", "lr24", "lr48" });
+               if (ok && !hasType) p.type = p.order == 1 ? "1st" : "2nd"; // files from before all-pass types
+               if (ok) p.order = p.type == "1st" ? 1 : 2;
+               return ok;
            })
         && xo(v, "hp", o.hp, ctx, err) && xo(v, "lp", o.lp, ctx, err)
         && fir(v, o.fir, ctx, err);
@@ -373,6 +378,7 @@ juce::var toVar(const SystemState& s)
     m.getDynamicObject()->setProperty("refSource", s.measure.refSource);
     m.getDynamicObject()->setProperty("averaging", s.measure.averaging);
     m.getDynamicObject()->setProperty("smoothing", s.measure.smoothing);
+    m.getDynamicObject()->setProperty("phaseSmoothing", s.measure.phaseSmoothing);
     m.getDynamicObject()->setProperty("multiWindow", s.measure.multiWindow);
     juce::Array<juce::var> pos, groups;
     for (auto& p : s.measure.positions) pos.add(p);
@@ -456,6 +462,7 @@ bool fromVar(const juce::var& v, SystemState& out, juce::String& err)
               && r.integer("refSource", s.measure.refSource, -1, kMaxSources - 1))) return false;
         if (!(r.integer("averaging", s.measure.averaging, 1, 256)
               && r.integer("smoothing", s.measure.smoothing, 0, 48)
+              && (!v["measure"].hasProperty("phaseSmoothing") || r.integer("phaseSmoothing", s.measure.phaseSmoothing, 0, 96))
               && r.boolean("multiWindow", s.measure.multiWindow))) return false;
         if (const auto* pa = v["measure"]["positions"].getArray()) {
             if (pa->size() > 64) { err = "measure/positions: at most 64"; return false; }
@@ -608,6 +615,7 @@ Params toParams(const SystemState& s, double sampleRate)
         if (t >= 0 && t < kMaxCh) p.gen.targets |= (1ull << t);
     auto channelOf = [&](int src) { return src >= 0 && src < int(s.sources.size()) ? s.sources[size_t(src)].channel : -1; };
     p.measure.micInput = channelOf(s.measure.micSource);
+    p.measure.splInput = p.measure.micInput;
     const auto extras = extraMicSources(s);
     p.measure.numExtra = int(extras.size());
     for (size_t k = 0; k < extras.size(); ++k) p.measure.extraMicInputs[k] = channelOf(extras[k]);

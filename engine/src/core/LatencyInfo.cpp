@@ -57,6 +57,16 @@ juce::var direction(const juce::String& name, bool output, int buffer)
 }
 } // namespace
 
+bool sharedClock(const juce::String& in, const juce::String& out)
+{
+    if (in == out) return true;
+    const auto a = findDevice(in), b = findDevice(out);
+    if (a == 0 || b == 0) return false;
+    const auto da = prop(a, kAudioDevicePropertyClockDomain, kAudioObjectPropertyScopeGlobal);
+    const auto db = prop(b, kAudioDevicePropertyClockDomain, kAudioObjectPropertyScopeGlobal);
+    return da != 0 && da == db; // 0 = domain unknown
+}
+
 juce::var latencyBreakdown(const juce::String& in, const juce::String& out, int buffer)
 {
     juce::Array<juce::var> a;
@@ -71,6 +81,7 @@ juce::var latencyBreakdown(const juce::String& in, const juce::String& out, int 
 
 namespace vt {
 juce::var latencyBreakdown(const juce::String&, const juce::String&, int) { return juce::Array<juce::var>(); }
+bool sharedClock(const juce::String& in, const juce::String& out) { return in == out; }
 }
 
 #endif

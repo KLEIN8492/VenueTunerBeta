@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { design, crossover, chainResponse, response, outputResponse, magDb, phaseDeg } from './filters';
+import { allpassMatched, design, crossover, chainResponse, response, outputResponse, magDb, phaseDeg } from './filters';
 import type { OutputConfig } from './types';
 
 const sr = 48000;
@@ -39,5 +39,23 @@ describe('filters (mirror of engine/src/dsp/Biquad.h)', () => {
     const r = outputResponse(o, sr, [1000]);
     expect(r.magDb[0]).toBeCloseTo(-6, 2);
     expect(Math.abs(r.phaseDeg[0])).toBeCloseTo(180, 1);
+  });
+});
+
+describe('LR-matched all-pass', () => {
+  it('equals the Linkwitz-Riley crossover sum (LR24 and LR48)', () => {
+    const fc = 120;
+    for (const [t, xo] of [['lr24', 'lr24'], ['lr48', 'lr48']] as const) {
+      const ap = allpassMatched(t, fc, sr);
+      const hp = crossover(xo, true, fc, sr), lp = crossover(xo, false, fc, sr);
+      for (const f of [30, 80, 120, 200, 1000]) {
+        const a = chainResponse(ap, f, sr), h = chainResponse(hp, f, sr), l = chainResponse(lp, f, sr);
+        expect(Math.hypot(a.re, a.im)).toBeCloseTo(1, 9);
+        expect(a.re).toBeCloseTo(h.re + l.re, 6);
+        expect(a.im).toBeCloseTo(h.im + l.im, 6);
+      }
+    }
+    expect(allpassMatched('1st', 500, sr)).toHaveLength(1);
+    expect(allpassMatched('lr48', 500, sr)).toHaveLength(2);
   });
 });

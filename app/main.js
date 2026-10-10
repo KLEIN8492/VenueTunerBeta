@@ -46,6 +46,10 @@ async function ensureEngine() {
     dialog.showErrorBox('VenueTuner engine', 'The audio engine crashed 5 times in a minute and will not be restarted automatically.\nCheck the audio device, then relaunch the app.');
     return;
   }
+  if (!fs.existsSync(ENGINE)) {
+    dialog.showErrorBox('VenueTuner engine', `Engine binary not found:\n${ENGINE}` + (app.isPackaged ? '' : '\n\nBuild it first:  npm run build'));
+    return;
+  }
   restarts.push(now);
   console.log(`[shell] starting engine ${ENGINE}`);
   engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -165,8 +169,10 @@ app.setName('VenueTuner');
 app.whenReady().then(async () => {
   protocol.handle('app', (req) => {
     const { pathname } = new URL(req.url);
-    const file = path.normalize(path.join(UI_DIST, decodeURIComponent(pathname)));
-    if (!file.startsWith(UI_DIST)) return new Response('forbidden', { status: 403 });
+    const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
+    const root = path.resolve(UI_DIST);
+    const file = path.resolve(root, rel);
+    if (file !== root && !file.startsWith(root + path.sep)) return new Response('forbidden', { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
   });
   buildMenu();

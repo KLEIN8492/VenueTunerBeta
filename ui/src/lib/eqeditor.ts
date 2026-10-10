@@ -4,17 +4,21 @@
 // Predicted = captured trace + (filters now − filters at capture). Captured traces carry
 // the outputs' processing from when they were taken (see measurement.ts).
 import { Plot, type PlotTrace } from './plot';
-import { outputResponse, peqSection, response, magDb, wrapDeg } from './filters';
-import { coherenceAlpha } from './coherence';
+import { apType, outputResponse, peqSection, response, magDb, wrapDeg } from './filters';
+import { blankThreshold, coherenceAlpha } from './coherence';
 import { esc } from './statusbar';
 import { samplesToMs } from './scale';
 import type { Engine, TfFrame } from './engine';
-import type { ApBand, OutputConfig, PeqBand, PeqType, Trace, XoType } from './types';
+import type { ApBand, ApType, OutputConfig, PeqBand, PeqType, Trace, XoType } from './types';
 
 const FREQS = Array.from({ length: 360 }, (_, i) => 20 * Math.pow(1000, i / 359));
 const PEQ_TYPES: PeqType[] = ['bell', 'lowshelf', 'highshelf', 'notch', 'lowpass', 'highpass'];
 const XO_TYPES: XoType[] = ['off', 'bw6', 'bw12', 'bw18', 'bw24', 'bw36', 'bw48', 'lr12', 'lr24', 'lr48'];
 const MAX_PEQ = 16, MAX_AP = 4;
+// All-pass "slope" is its phase order (an all-pass never changes level): 1st = 180° turn
+// (like a 6 dB/oct crossover), 2nd = 360° (like 12 dB/oct; Q sets how sharply it turns),
+// LR-matched = exactly the phase of that crossover, to line up a path that doesn't have one.
+const AP_TYPES: [ApType, string][] = [['1st', '1st · 6 dB/oct'], ['2nd', '2nd · 12 dB/oct (Q)'], ['lr24', 'LR24-matched'], ['lr48', 'LR48-matched']];
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 type Handle = { kind: 'peq' | 'hp' | 'lp' | 'ap'; index: number };
@@ -145,7 +149,7 @@ export class EqEditor {
     }
     if (this.showLive && this.live && this.live.frames > 0) {
       const off = normOffset(this.live.freq, this.live.mag) - normOffset(this.live.freq, outputResponse(o, sr, this.live.freq).magDb);
-      const alpha = Array.from(this.live.coh, coherenceAlpha);
+      const t = blankThreshold(), alpha = Array.from(this.live.coh, (c) => coherenceAlpha(c, t));
       magT.push({ x: this.live.freq, y: Array.from(this.live.mag, (m) => m - off), color: css('--accent'), alpha, label: 'LIVE' });
       phT.push({ x: this.live.freq, y: this.live.phase, color: css('--accent'), alpha, wrap: 180 });
     }
@@ -245,7 +249,7 @@ export class EqEditor {
       e.preventDefault();
       const k = Math.pow(1.12, -Math.sign(e.deltaY));
       if (h.kind === 'peq') { const b = this.cfg.peq[h.index]; b.q = round(clamp(b.q * k, 0.1, 30), 0.01); this.sendPeq(); }
-      else { const a = this.cfg.ap[h.index]; a.q = round(clamp(a.q * k, 0.1, 10), 0.01); this.sendAp(); }
+      else if (apType(this.cfg.ap[h.index]) === '2nd') { const a = this.cfg.ap[h.index]; a.q = round(clamp(a.q * k, 0.1, 10), 0.01); this.sendAp(); }
       this.selected = h;
       this.redraw();
       this.updatePanelValues();
@@ -310,11 +314,11 @@ export class EqEditor {
         <select data-f="type">${XO_TYPES.map((t) => opt(t, t.toUpperCase(), t === o[k].type)).join('')}</select>${num('freq', o[k].freq, 1, 10, 24000, 66)}<span class="dim">Hz</span></div>`).join('')}
 
       <h2>All-pass ${o.ap.length}/${MAX_AP}</h2>
-      <table class="eqt"><tr><th></th><th>#</th><th>order</th><th>Hz</th><th>Q</th><th></th></tr>
+      <table class="eqt"><tr><th></th><th>#</th><th>type</th><th>Hz</th><th>Q</th><th></th></tr>
       ${o.ap.map((a: ApBand, i) => `<tr data-k="ap" data-i="${i}"${isSel('ap', i)}>
         <td><input type="checkbox" data-f="on" ${a.on ? 'checked' : ''}/></td><td>${i + 1}</td>
-        <td><select data-f="order">${opt('1', '1st', a.order === 1)}${opt('2', '2nd', a.order === 2)}</select></td>
-        <td>${num('freq', a.freq, 1, 10, 24000, 62)}</td><td>${num('q', a.q, 0.05, 0.1, 10, 46)}</td>
+        <td><select data-f="type">${AP_TYPES.map(([t, l]) => opt(t, l, t === apType(a))).join('')}</select></td>
+        <td>${num('freq', a.freq, 1, 10, 24000, 62)}</td><td>${num('q', a.q, 0.05, 0.1, 10, 46).replace('<input', apType(a) === '2nd' ? '<input' : '<input disabled')}</td>
         <td><button data-act="del">×</button></td></tr>`).join('')}
       </table>
       <div class="row"><button data-act="addAp" ${o.ap.length >= MAX_AP ? 'disabled' : ''}>+ all-pass</button></div>
@@ -366,7 +370,13 @@ export class EqEditor {
     const k = holder.dataset.k!;
     if (k === 'peq' || k === 'ap') {
       const list = (k === 'peq' ? o.peq : o.ap) as unknown as Record<string, unknown>[];
-      list[+holder.dataset.i!][f] = f === 'order' ? Number(value) : value;
+      const item = list[+holder.dataset.i!];
+      item[f] = value;
+      if (k === 'ap' && f === 'type') { // order follows the type; Q only means something for the plain 2nd order
+        item.order = value === '1st' ? 1 : 2;
+        const q = holder.querySelector<HTMLInputElement>('input[data-f=q]');
+        if (q) q.disabled = value !== '2nd';
+      }
       if (k === 'peq') this.sendPeq(); else this.sendAp();
       this.selected = { kind: k, index: +holder.dataset.i! };
     } else if (k === 'hp' || k === 'lp') {
@@ -397,7 +407,7 @@ export class EqEditor {
       this.render();
     }
     if (act === 'addAp' && o.ap.length < MAX_AP) {
-      o.ap.push({ on: true, order: 2, freq: 100, q: 0.7 });
+      o.ap.push({ on: true, order: 2, type: '2nd', freq: 100, q: 0.7 });
       this.selected = { kind: 'ap', index: o.ap.length - 1 };
       this.sendAp();
       this.render();

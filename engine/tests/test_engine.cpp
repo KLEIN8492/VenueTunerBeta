@@ -41,6 +41,7 @@ struct Harness
             engine.processBlock(ins, kIn, outs, kOut, kBlock);
             std::copy(out[0].begin(), out[0].end(), loopback);
             engine.analyzer().process();
+            engine.micMeters().process();
         }
     }
 };
@@ -121,6 +122,25 @@ TEST_CASE("Internal loopback: analyzer measures the output-to-mic loop delay")
     auto r = h.engine.analyzer().result();
     REQUIRE(!r.magDb.empty());
     CHECK_THAT(r.magDb[100], WithinAbs(0.0, 0.5));
+}
+
+TEST_CASE("Sound level keeps measuring the user's mic while a job borrows the analyzer")
+{
+    Harness h;
+    h.state.gen.on = true;
+    h.state.gen.levelDb = -20.0f;
+    h.state.gen.targets = { 0 };
+    h.state.measure.micSource = 1;
+    h.apply();
+    h.engine.unmuteAfterFault();
+    h.run(1500); // 2 s of pink noise on the mic
+    const double before = h.engine.spl().reading().leqWindow[0][0]; // last second
+    // A job (e.g. latency calibration) points the analyzer at another input carrying a loud signal.
+    auto p = vt::toParams(h.state);
+    p.measure.micInput = 0;
+    h.engine.setParams(p);
+    h.run(1500, 0.5f);
+    CHECK_THAT(h.engine.spl().reading().leqWindow[0][0], WithinAbs(before, 1.0)); // still the pink noise, not −6 dBFS
 }
 
 TEST_CASE("Outputs write to their patched physical channel; the rest stays silent")

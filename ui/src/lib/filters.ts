@@ -1,6 +1,6 @@
 // Biquad designs and frequency responses — a mirror of engine/src/dsp/Biquad.h so the
 // EQ graph can draw instantly. Keep both files in step.
-import type { OutputConfig, XoType } from './types';
+import type { ApBand, ApType, OutputConfig, XoType } from './types';
 
 export interface Biquad { b0: number; b1: number; b2: number; a1: number; a2: number }
 export interface Complex { re: number; im: number }
@@ -82,6 +82,18 @@ function butterworth(n: number, hp: boolean, f: number, sr: number): Biquad[] {
   return s;
 }
 
+// Type of an all-pass band (older states only have `order`).
+export function apType(a: ApBand): ApType { return a.type ?? (a.order === 1 ? '1st' : '2nd'); }
+
+// All-pass sections for a type. LR-matched = the all-pass whose phase equals that Linkwitz-Riley
+// crossover's sum: half its order, Butterworth poles (LR24 → Q 0.707; LR48 → Q 0.541 + 1.307).
+export function allpassMatched(type: ApType, f: number, sr: number, q = 0.707): Biquad[] {
+  if (type === '1st') return [design.allpass1(f, sr)];
+  if (type === 'lr24') return [design.allpass2(f, Math.SQRT1_2, sr)];
+  if (type === 'lr48') return [1, 2].map((k) => design.allpass2(f, 1 / (2 * Math.cos((Math.PI * (2 * k - 1)) / 8)), sr));
+  return [design.allpass2(f, q, sr)];
+}
+
 export function crossover(t: XoType, hp: boolean, f: number, sr: number): Biquad[] {
   const orders: Record<XoType, [number, boolean]> = {
     off: [0, false], bw6: [1, false], bw12: [2, false], bw18: [3, false], bw24: [4, false], bw36: [6, false], bw48: [8, false],
@@ -111,7 +123,7 @@ export function outputSections(o: OutputConfig, sr: number): Biquad[] {
     ...(o.peq ?? []).map((b) => peqSection(b, sr)),
     ...crossover(o.hp?.type ?? 'off', true, o.hp?.freq ?? 100, sr),
     ...crossover(o.lp?.type ?? 'off', false, o.lp?.freq ?? 100, sr),
-    ...(o.ap ?? []).filter((a) => a.on).map((a) => (a.order === 1 ? design.allpass1(a.freq, sr) : design.allpass2(a.freq, a.q, sr))),
+    ...(o.ap ?? []).filter((a) => a.on).flatMap((a) => allpassMatched(apType(a), a.freq, sr, a.q)),
     ...(o.airGainDb ? [design.highShelf(o.airFreq, 0.707, o.airGainDb, sr)] : []), // air compensation (engine-derived)
   ];
 }

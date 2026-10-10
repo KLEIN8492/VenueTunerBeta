@@ -5,9 +5,9 @@
 namespace vt {
 
 constexpr int kMaxCh = 64;
-// IIR slots per output: 16 PEQ + 4 HP + 4 LP + 4 all-pass + air shelf (fixed positions so
-// ramps line up).
-constexpr int kIirPeq = 0, kIirHp = 16, kIirLp = 20, kIirAp = 24, kIirAir = 28, kMaxIir = 29;
+// IIR slots per output: 16 PEQ + 4 HP + 4 LP + 4 all-pass × 2 sections (an LR48-matched
+// all-pass needs two) + air shelf. Fixed positions so coefficient ramps line up.
+constexpr int kIirPeq = 0, kIirHp = 16, kIirLp = 20, kIirAp = 24, kIirAir = 32, kMaxIir = 33;
 
 // Everything the audio thread needs, as plain data (copied through a TripleBuffer).
 struct OutputParams
@@ -47,6 +47,7 @@ constexpr int kMaxMics = 8; // main measurement mic + 7 more measured simultaneo
 struct MeasureParams
 {
     int micInput = -1;          // physical input index, -1 = none
+    int splInput = -1;          // sound level / RTA mic: automatic jobs never redirect it
     int extraMicInputs[kMaxMics - 1] { -1, -1, -1, -1, -1, -1, -1 };
     int numExtra = 0;           // extra analyzers in use (same reference as the main one)
     RefSource ref = RefSource::Generator;

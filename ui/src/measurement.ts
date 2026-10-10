@@ -1,11 +1,12 @@
 import './lib/style.css';
 import { connectFromLocation, type TfFrame, type RtaFrame, type DecayBand } from './lib/engine';
-import { parseTraceText } from './lib/traceimport';
+import { parseTraceText, onGrid } from './lib/traceimport';
+import { spatialAverage } from './lib/average';
 import { loadPrefs, savePrefs, readingName, fmt, trustLabel, throttled, openCalibration, WINDOW_NAMES, type TimeW } from './lib/spl';
 import { Plot, type PlotTrace } from './lib/plot';
 import { mountStatusBar, esc } from './lib/statusbar';
 import { installUndo } from './lib/undo';
-import { coherenceAlpha } from './lib/coherence';
+import { blankThreshold, coherenceAlpha, setBlankThreshold } from './lib/coherence';
 import { samplesToMs, SPEED_OF_SOUND } from './lib/scale';
 import type { SystemState, Trace } from './lib/types';
 import { mountAutoEq, mountXoAlign } from './lib/tunepanels';
@@ -31,6 +32,7 @@ const PALETTE = ['#ff9f43', '#a78bfa', '#f472b6', '#60a5fa', '#facc15', '#34d399
 interface Stored extends Trace { color: string; visible: boolean }
 let traces: Stored[] = [];
 try { traces = JSON.parse(localStorage.getItem('vt.traces') ?? '[]'); } catch { traces = []; }
+traces = traces.map(onGrid); // traces saved by older versions (e.g. 1/48-octave sweeps)
 const saveTraces = () => { try { localStorage.setItem('vt.traces', JSON.stringify(traces)); } catch { /* storage unavailable */ } };
 
 let live: TfFrame | null = null;
@@ -60,14 +62,15 @@ function redraw(): void {
     mag.draw();
     return;
   }
+  const blank = blankThreshold();
   for (const t of traces.filter((t) => t.visible)) {
-    const alpha = t.coh.map(coherenceAlpha); // same blanking as the live trace
+    const alpha = t.coh.map((c) => coherenceAlpha(c, blank)); // same blanking as the live trace
     magT.push({ x: t.freq, y: t.mag, color: t.color, alpha, label: t.name });
     phT.push({ x: t.freq, y: t.phase, color: t.color, alpha, wrap: 180 });
     cohT.push({ x: t.freq, y: t.coh, color: t.color });
   }
   if (live && live.frames > 0) {
-    const alpha = Array.from(live.coh, coherenceAlpha);
+    const alpha = Array.from(live.coh, (c) => coherenceAlpha(c, blank));
     magT.push({ x: live.freq, y: live.mag, color: LIVE, width: 1.75, alpha, label: 'LIVE' });
     phT.push({ x: live.freq, y: live.phase, color: LIVE, width: 1.5, alpha, wrap: 180 });
     cohT.push({ x: live.freq, y: live.coh, color: LIVE });
@@ -132,6 +135,9 @@ side.innerHTML = `
   <div class="row"><label>Reference</label><select id="ref" class="grow"></select></div>
   <div class="row"><label>Average</label><select id="avg" class="grow"></select></div>
   <div class="row"><label>Smoothing</label><select id="smooth" class="grow"></select></div>
+  <div class="row" title="Phase is smoothed separately: high-frequency phase turns fast, keep it fine"><label>Phase sm.</label><select id="phSmooth" class="grow"></select></div>
+  <div class="row" title="Phase scale; when zoomed, the wheel moves it and a double-click resets"><label>Phase view</label><select id="phZoom" class="grow"><option value="180">±180°</option><option value="90">±90°</option><option value="45">±45°</option></select></div>
+  <div class="row" title="Coherence blanking: points below are hidden, fully drawn 0.4 above. Raise it outdoors / in noise"><label>Coh. blank</label><input id="cohBlank" type="range" min="0" max="0.9" step="0.05" class="grow"/><span id="cohBlankV" class="dim"></span></div>
   <div class="row"><label>FFT</label><select id="fftMode" class="grow"></select></div>
   <div class="row"><button id="reset" class="grow">Reset avg [R]</button></div>
   <div class="row"><button id="sweep" class="grow">Log sweep [S]</button><select id="sweepLen"><option value="1">1 s</option><option value="3" selected>3 s</option><option value="5">5 s</option><option value="8">8 s</option></select></div>
@@ -139,6 +145,9 @@ side.innerHTML = `
 
   <h2>Delay finder</h2>
   <div id="delay" class="dim">waiting for signal…</div>
+  <div class="row"><button id="dLock" class="grow" title="Hold the measurement delay and set it by hand (Smaart-style): nudge until the phase is flat through the crossover">Lock delay</button></div>
+  <div class="row" id="dNudge"><button data-n="-0.1">−0.1</button><button data-n="-0.01">−0.01</button><button data-n="0.01">+0.01</button><button data-n="0.1">+0.1</button><span class="dim">ms</span></div>
+  <div id="dAuto" class="dim"></div>
   <div class="row"><button id="storeRef" class="grow">Store as reference arrival</button></div>
   <div id="align" class="dim"></div>
   <div class="row"><select id="alignOut" class="grow"></select><button id="alignBtn">Align to ref</button></div>
@@ -190,7 +199,7 @@ mountMatrix(side.querySelector<HTMLElement>('[data-sp=matrix]')!, {
   // A re-measured cell replaces its previous capture (same "<group> @ <position>" name).
   putTrace: (t, extra) => {
     const i = traces.findIndex((x) => x.name === t.name);
-    const stored = { ...t, ...extra, outputs: engine.state?.outputs, color: i >= 0 ? traces[i].color : PALETTE[traces.length % PALETTE.length], visible: true };
+    const stored = { ...onGrid(t), ...extra, outputs: engine.state?.outputs, color: i >= 0 ? traces[i].color : PALETTE[traces.length % PALETTE.length], visible: true };
     if (i >= 0) traces[i] = stored; else traces.push(stored);
     renderTraces();
   },
@@ -217,6 +226,8 @@ function renderControls(s: SystemState): void {
   ($('avg') as HTMLSelectElement).innerHTML = [1, 2, 4, 8, 16, 32, 64, 128].map((n) => opt(n, `${n} frames`, s.measure.averaging === n)).join('');
   ($('smooth') as HTMLSelectElement).innerHTML = [[0, 'none'], [48, '1/48 oct'], [24, '1/24 oct'], [12, '1/12 oct'], [6, '1/6 oct'], [3, '1/3 oct']]
     .map(([n, l]) => opt(n, String(l), s.measure.smoothing === n)).join('');
+  ($('phSmooth') as HTMLSelectElement).innerHTML = [[0, 'none'], [48, '1/48 oct'], [24, '1/24 oct'], [12, '1/12 oct'], [6, '1/6 oct']]
+    .map(([n, l]) => opt(n, String(l), (s.measure.phaseSmoothing ?? 48) === n)).join('');
   ($('fftMode') as HTMLSelectElement).innerHTML = opt(1, 'Multi-time-window', s.measure.multiWindow) + opt(0, 'Fixed 16k', !s.measure.multiWindow);
   $('alignOuts').innerHTML = s.outputs.map((o, i) =>
     `<button data-a="${i}" class="${alignPick.has(i) ? 'on' : ''}" title="${esc(o.name)}">${i + 1}</button>`).join('');
@@ -248,6 +259,23 @@ $('ref').onchange = (e) => {
 };
 $('avg').onchange = (e) => report(engine.patch('measure/averaging', Number((e.target as HTMLSelectElement).value)));
 $('smooth').onchange = (e) => report(engine.patch('measure/smoothing', Number((e.target as HTMLSelectElement).value)));
+$('phSmooth').onchange = (e) => report(engine.patch('measure/phaseSmoothing', Number((e.target as HTMLSelectElement).value)));
+function setPhaseZoom(half: number): void {
+  Object.assign(phase.opts, { yMin: -half, yMax: half, yStep: half >= 180 ? 90 : half / 2, yLocked: half >= 180 });
+  phase.draw();
+}
+$('phZoom').onchange = (e) => setPhaseZoom(Number((e.target as HTMLSelectElement).value));
+phase.onReset = () => setPhaseZoom(Number(($('phZoom') as HTMLSelectElement).value));
+{
+  const el = $('cohBlank') as HTMLInputElement, show = () => { $('cohBlankV').textContent = Number(el.value).toFixed(2); };
+  el.value = String(blankThreshold()); show();
+  el.oninput = () => { setBlankThreshold(Number(el.value)); show(); redraw(); };
+}
+$('dLock').onclick = () => report(engine.request('measure.delayLock', { on: !(live?.delayLocked ?? false) }));
+$('dNudge').onclick = (e) => {
+  const n = (e.target as HTMLElement).dataset.n;
+  if (n) report(engine.request('measure.delayNudge', { ms: Number(n) }));
+};
 $('reset').onclick = () => report(engine.request('measure.reset'));
 $('fftMode').onchange = (e) => report(engine.patch('measure/multiWindow', (e.target as HTMLSelectElement).value === '1'));
 
@@ -261,6 +289,7 @@ engine.on('sweep', (ev) => {
   if (!ev.ok || !ev.trace) { $('sweepMsg').innerHTML = `<span class="bad">${esc(ev.message ?? 'sweep failed')}</span>`; return; }
   addTrace(ev.trace);
   $('sweepMsg').textContent = `${ev.trace.name}: ${samplesToMs(ev.trace.delaySamples, ev.trace.sampleRate).toFixed(3)} ms total`;
+  if (ev.warning) $('sweepMsg').innerHTML += ` · <span class="bad">${esc(ev.warning)}</span>`;
 });
 
 // ---------------------------------------------------------------- auto alignment
@@ -302,6 +331,11 @@ function arrivalMs(): number | null {
 function renderDelay(): void {
   const s = engine.status;
   if (!live || !s) return;
+  $('dLock').textContent = live.delayLocked ? 'Unlock (back to auto)' : 'Lock delay';
+  $('dLock').classList.toggle('on', live.delayLocked);
+  $('dAuto').innerHTML = live.delayLocked
+    ? `LOCKED · finder sees ${samplesToMs(live.autoDelaySamples, s.sampleRate).toFixed(3)} ms (${samplesToMs(live.delaySamples - live.autoDelaySamples, s.sampleRate) >= 0 ? '+' : ''}${samplesToMs(live.delaySamples - live.autoDelaySamples, s.sampleRate).toFixed(3)}) — nudge until the phase is flat at the crossover`
+    : '';
   if (!live.delayValid) { $('delay').innerHTML = `no clear arrival — check mic, generator, level`; return; }
   const total = samplesToMs(live.delaySamples, s.sampleRate);
   const arr = arrivalMs()!;
@@ -353,7 +387,7 @@ $('traceList').ondblclick = (e) => {
 // Traces keep the processing that was active when captured: the EQ editor uses it to
 // compute "predicted after EQ".
 function addTrace(t: Trace): void {
-  traces.push({ ...t, outputs: engine.state?.outputs, color: PALETTE[traces.length % PALETTE.length], visible: true });
+  traces.push({ ...onGrid(t), outputs: engine.state?.outputs, color: PALETTE[traces.length % PALETTE.length], visible: true });
   renderTraces();
 }
 
@@ -365,17 +399,11 @@ async function capture(): Promise<void> {
 }
 $('capture').onclick = () => report(capture());
 
-// Spatial average: power-average magnitude of visible traces, coherence-weighted later (M3).
+// Spatial average of the visible traces: level-matched power average (see lib/average.ts).
 $('avgTraces').onclick = () => {
   const vis = traces.filter((t) => t.visible);
   if (vis.length < 2) return alert('Show at least two traces to average.');
-  const n = vis[0].freq.length;
-  const avg: Stored = { ...vis[0], name: `AVG(${vis.length})`, color: '#ffffff', visible: true, mag: [], phase: [], coh: [] };
-  for (let i = 0; i < n; i++) {
-    avg.mag.push(10 * Math.log10(vis.reduce((a, t) => a + Math.pow(10, t.mag[i] / 10), 0) / vis.length));
-    avg.phase.push(vis[0].phase[i]);
-    avg.coh.push(Math.min(...vis.map((t) => t.coh[i])));
-  }
+  const avg: Stored = { ...spatialAverage(vis, `AVG(${vis.length})`)!, color: '#ffffff', visible: true };
   traces.push(avg);
   renderTraces();
 };
@@ -435,7 +463,8 @@ const renderSpl = throttled<import('./lib/types').Status>(() => prefs.refreshHz,
   const leq = prefs.window === 5 ? s.leq[w] : s.leqWindows[prefs.window]?.[w] ?? -200;
   $('splLeq').textContent = `L${letter}eq ${fmt(leq)}`;
   const m = Math.floor(s.leqSeconds / 60), sec = Math.floor(s.leqSeconds % 60);
-  $('splExtra').textContent = `LCpeak ${fmt(s.cPeak)} · max L${letter}F ${fmt(s.max[w])} · since reset ${m}:${String(sec).padStart(2, '0')} · mic ${fmt(s.micDbfs)} dBFS`;
+  $('splExtra').textContent = `LCpeak ${fmt(s.cPeak)} · max L${letter}F ${fmt(s.max[w])} · since reset ${m}:${String(sec).padStart(2, '0')} · mic ${fmt(s.micDbfs)} dBFS`
+    + (s.gapSeconds > 0.05 ? ` · ⚠ ${s.gapSeconds.toFixed(1)} s of audio missing from the Leq` : '');
 });
 engine.on('status', renderSpl);
 

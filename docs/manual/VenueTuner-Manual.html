@@ -180,7 +180,7 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
 <h3>Outputs</h3>
 <p>One output per speaker feed: name, colour, type, interface channel and <b>fed by</b> (which inputs, at which level in dB). Presets: <i>Stereo pair</i> (L/R from the first two program inputs) and <i>Sub</i> (L+R at −6 dB each, low-pass LR24 at 100 Hz). ↑↓ reorder, ⧉ duplicates an output with its processing, × deletes it. A channel used by another output can't be picked twice.</p>
 <h3>Calibration</h3>
-<p><b>Interface latency</b>: the latency the driver reports is used automatically. For precision, cable an output to an input and press <b>Calibrate</b> (do it once per interface, sample rate and buffer). <b>Measurement microphone calibration file</b>: load the mic's .cal / .txt file to correct its frequency response.</p>
+<p><b>Interface latency</b>: the latency the driver reports is used automatically. For precision, cable an output to an input and press <b>Calibrate</b> (do it once per interface, sample rate and buffer). That output's processing is bypassed while it measures, so its crossovers and EQ don't end up in the interface latency. <b>Measurement microphone calibration file</b>: load the mic's .cal / .txt file to correct its frequency response.</p>
 
 <h2 id="live"><span class="n">6</span>Live window <span class="mono" style="font-size:14px;color:var(--dim)">⌘2</span></h2>
 <h3>Toolbar</h3>
@@ -215,7 +215,7 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
   <tr><td>Delay</td><td>0–1000 ms; changes crossfade over 50 ms</td><td>as set</td></tr>
   <tr><td>PEQ</td><td>16 bands: bell, low/high shelf, notch, low/high-pass 12 dB; 10 Hz–24 kHz, −30…+15 dB, Q 0.1–30</td><td>0</td></tr>
   <tr><td>Crossover</td><td>Butterworth 6/12/18/24/36/48 and Linkwitz-Riley 12/24/48 dB/oct</td><td>0</td></tr>
-  <tr><td>All-pass</td><td>1st or 2nd order (frequency, Q): phase only, for alignment</td><td>0</td></tr>
+  <tr><td>All-pass</td><td>Phase only, for alignment: <i>1st</i> (180° turn, like a 6 dB/oct crossover), <i>2nd</i> (360°, like 12 dB/oct, Q sets how sharply it turns), <i>LR24-matched</i> / <i>LR48-matched</i> (exactly the phase of that crossover, e.g. to give a full-range box the phase of the sub/top crossover it doesn't have)</td><td>0</td></tr>
   <tr><td>Air shelf</td><td>Automatic high shelf from the air conditions (see below)</td><td>0</td></tr>
   <tr><td>FIR</td><td>WAV or text coefficients (up to 65 536 taps); on/off crossfades</td><td>the filter's own (shown)</td></tr>
   <tr><td>Limiter</td><td>Peak limiter, threshold −40…0 dBFS, no look-ahead</td><td>0</td></tr>
@@ -228,8 +228,8 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
 <h3>Plots</h3>
 <div class="two">
 <div><b>Magnitude</b>: level difference between what the mic hears and the reference, per frequency. Scroll to move the range, double-click to reset.<br>
-<b>Phase</b>: timing per frequency, with the arrival time removed.</div>
-<div><b>Coherence</b>: how much of what the mic hears comes from the system (1 = all). Points below 0.4 are hidden; up to 0.8 they fade.<br>
+<b>Phase</b>: timing per frequency, with the arrival time removed. Plotted every 1/48 octave (479 points), because phase turns fast in the highs: 0.1 ms of error is 36° at 1 kHz but 360° at 10 kHz. <i>Phase view</i> zooms to ±90° or ±45°; then the wheel moves it and a double-click resets.</div>
+<div><b>Coherence</b>: how much of what the mic hears comes from the system (1 = all). Points below the blanking threshold (<i>Coh. blank</i>, default 0.4) are hidden, and fade in up to 0.4 above it. Raise it outdoors or in noise, lower it to see through a reverberant hall.<br>
 <b>Impulse response</b>: the arrival in time; the dashed line marks the detected delay.</div>
 </div>
 <h3>Measure tab</h3>
@@ -238,17 +238,17 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
   <li><b>View</b>: <i>Transfer fn</i> or <i>RTA</i> (real-time spectrum of the mic in 1/3 or 1/6 octave; works on music, no generator needed).</li>
   <li><b>Generator</b>: pink noise on the selected outputs; level in dBFS RMS (maximum −12).</li>
   <li><b>Mic / Reference</b>: the main measurement mic; the reference is the internal loopback (the generator signal, interface latency compensated) or a physical input.</li>
-  <li><b>Average</b> (frames), <b>Smoothing</b> (none to 1/3 octave), <b>FFT</b>: <i>multi-time-window</i> (long windows in the lows, short in the highs, which hides late reflections) or <i>fixed 16k</i>.</li>
-  <li><b>Log sweep</b> (<kbd>S</kbd>): a 1–8 s sweep for a high-resolution measurement and the room's reverberation.</li>
-  <li><b>Delay finder</b>: arrival time in ms and metres. <i>Store as reference arrival</i>, then measure another speaker and <i>Align to ref</i>.</li>
+  <li><b>Average</b> (frames), <b>Smoothing</b> (magnitude, none to 1/3 octave), <b>Phase sm.</b> (phase, separate, default 1/48 octave: keep it fine while the magnitude is smoothed for EQ), <b>FFT</b>: <i>multi-time-window</i> (long windows in the lows, short in the highs, which hides late reflections) or <i>fixed 16k</i>.</li>
+  <li><b>Log sweep</b> (<kbd>S</kbd>): a 1–8 s sweep for a high-resolution measurement and the room's reverberation. It uses the same frequency points and time windows as the live measurement, so a sweep and pink noise of the same speaker read the same; its coherence comes from the signal-to-noise ratio. If a limiter worked during the sweep you are told to lower the level and sweep again.</li>
+  <li><b>Delay finder</b>: arrival time in ms and metres. <i>Store as reference arrival</i>, then measure another speaker and <i>Align to ref</i>. <b>Lock delay</b> holds the measurement delay so you can set it by hand: the −0.1 / −0.01 / +0.01 / +0.1 ms buttons move it (nudges under half a sample only rotate the phase; larger ones restart the averaging) and the panel shows what the finder still sees. The usual reason: the impulse peak of a sub or of a filtered box is not where its phase is flat, so nudge until the phase is flat through the crossover region. <i>Unlock</i> returns to automatic.</li>
   <li><b>Traces</b>: <b>Capture</b> (<kbd>C</kbd>), show/hide, rename (double-click), average, <b>Import…</b> (REW, Smaart or VenueTuner text exports), <b>Export</b>.</li>
 </ul>
 <h3>Matrix tab: sequenced measurements</h3>
 <p><b>Groups</b> are outputs played together (e.g. "Subs" = outputs 3 + 4); <i>One per output</i> creates them for you. <b>Positions</b> are where the mic goes.</p>
 <ul>
-  <li><b>One mic</b>: place it, press <b>▶</b> in that position's column. Each group plays alone and is captured once its arrival is stable and averaged. A capture with low coherence (talking, a door) is retried once, then marked ✗. Move the mic and repeat.</li>
+  <li><b>One mic</b>: place it, press <b>▶</b> in that position's column. Each group plays alone and is captured once its arrival is stable and at least 8 frames are averaged (about 3 s). A capture with low coherence (talking, a door) is retried once, then marked ✗. A capture during which a limiter worked is rejected: lower the generator level. Automatic captures always average at least 16 frames, whatever the display setting. Move the mic and repeat.</li>
   <li><b>Several mics</b>: give each position its own mic and press <b>▶ All positions with a mic</b>: every position is captured at once from the same noise (up to 8 mics).</li>
-  <li>Click a cell to re-measure it. <b>avg</b> averages a group over all positions and shows it alone, ready for Auto-EQ.</li>
+  <li>Click a cell to re-measure it. <b>avg</b> averages a group over all positions and shows it alone, ready for Auto-EQ. Positions are level-matched first, so the one nearest the speaker doesn't outweigh the others.</li>
 </ul>
 <h3>Room tab</h3>
 <p>After a log sweep: EDT, T20 and T30 per octave (63 Hz–8 kHz) and the decay curves. Use a quiet room and a 3 s sweep or longer.</p>
@@ -263,9 +263,18 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
 </ol>
 <p>Rules: it prefers cuts; the combined boost never exceeds +3 dB (adjustable); narrow, deep dips are left alone (they are cancellations that EQ can't fix); low-coherence regions are ignored.</p>
 <h3>Auto delay alignment</h3>
-<p>Align tab: choose the outputs and the reference (latest arrival or one output). Each output plays alone; delays are set so they all arrive together. Best for tops, fills and delay speakers.</p>
+<p>Align tab: choose the outputs and the reference (latest arrival or one output). Each output plays alone; an arrival counts once three successive measurements agree within 0.05 ms and the mic clearly hears that speaker. Delays are set so they all arrive together. For tops, fills and delay speakers: subs can't be mixed with full-range outputs here (a sub's impulse peak comes late), use Sub ↔ top below.</p>
 <h3>Sub ↔ top phase alignment</h3>
-<p>Capture the top alone and the sub alone from the same mic position. Compute searches the delay <b>and polarity</b> that give the strongest sum around the crossover (using phase, not just the impulse peak) and shows the summed response before and after.</p>
+<p>Capture the top alone and the sub alone from the same mic position. Compute searches the delay <b>and polarity</b> that give the strongest sum around the crossover (using phase, not just the impulse peak; low-coherence points count less) and shows the summed response before and after.</p>
+<h3>The manual way (as done on tour)</h3>
+<ol>
+  <li><b>Delays first, EQ last.</b> Time-align, then decide on polarity and all-pass, and only then EQ the sum: EQ on a misaligned system corrects the cancellations instead of the speakers.</li>
+  <li>Measure the main (top) at the alignment position with the delay finder; press <b>Lock delay</b> so this time becomes the reference for every following measurement.</li>
+  <li>Mute the top, play the sub alone, keep the locked delay. Capture both traces and compare their phase in the crossover region (Phase sm. 1/24 or finer, Phase view ±90°).</li>
+  <li>Add delay to the earlier of the two (output delay in the EQ editor) until the two phase traces overlap through the crossover. If they are 180° apart, try the polarity first: the "right" delay with the wrong polarity is usually a full period off.</li>
+  <li>Check the sum: the combined magnitude should rise about +6 dB over each part at the crossover. If they still drift apart above or below, an all-pass (often LR-matched on the top) can bend one phase curve onto the other.</li>
+  <li>Repeat the auto estimate a few times: if the finder's value jumps around, there is a reflection or noise problem. Fix that before trusting any delay.</li>
+</ol>
 
 <h2 id="spl"><span class="n">10</span>Sound level, calibration and limits</h2>
 <h3>Readings</h3>
@@ -282,7 +291,7 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
 <table>
   <tr><th>Method</th><th>How</th><th>Accuracy</th></tr>
   <tr><td>1 · Calibrator</td><td>Put a 94 dB (or 114 dB) calibrator on the mic, press Calibrate</td><td>Best</td></tr>
-  <tr><td>2 · Reference meter</td><td>Play pink noise, type what an SPL meter or Smaart reads (Slow, its weighting), press Match</td><td>As good as the reference</td></tr>
+  <tr><td>2 · Reference meter</td><td>Play steady pink noise for 10 s with both mics side by side; type the other meter's 10 s Leq (or average Slow reading, its weighting), press Match</td><td>As good as the reference</td></tr>
   <tr><td>3 · Datasheets</td><td>Mic sensitivity (mV/Pa), interface level at 0 dBFS (dBu), preamp gain</td><td>Estimate, ±3 dB</td></tr>
 </table>
 <div class="warn"><b>Calibration follows the gain knob</b>
@@ -333,7 +342,8 @@ Set limiter thresholds and crossovers before raising amplifier levels. Pink nois
   <tr><td>Clicks or dropouts (XRUN rising)</td><td>Use a larger buffer (128 or 256), close other apps, bypass FIR filters on unused outputs.</td></tr>
   <tr><td>High latency</td><td>Settings › Audio › <i>Where the latency comes from</i>: if most of it is "stream (hardware DSP)", it's the device itself (e.g. built-in Mac devices); use a pro interface.</td></tr>
   <tr><td>"Outputs on channels this interface doesn't have"</td><td>The interface changed: re-patch those outputs/inputs in Settings.</td></tr>
-  <tr><td>SPL looks wrong</td><td>Calibrate (section 10); recalibrate after changing the mic gain.</td></tr>
+  <tr><td>SPL looks wrong</td><td>Calibrate (section 10); recalibrate after changing the mic gain. The Leq restarts when you pick another mic. Automatic measurements never touch it.</td></tr>
+  <tr><td>"Input and output are separate devices" in the status bar</td><td>Two interfaces on different clocks drift apart, so internal-loopback delay and phase wander. Use one interface (or an aggregate device with drift correction), or a cabled loopback reference.</td></tr>
   <tr><td>macOS refuses to open the app</td><td>See <a href="#install">section 3</a> (Open Anyway).</td></tr>
 </table>
 

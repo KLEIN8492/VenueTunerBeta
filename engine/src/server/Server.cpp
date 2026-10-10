@@ -1,4 +1,5 @@
 #include "server/Server.h"
+#include <exception>
 
 namespace vt {
 
@@ -18,7 +19,16 @@ Server::Server(Dispatcher& d, AudioEngine& e, int port)
         ix::WebSocket* target = &client;
         juce::MessageManager::callAsync([this, weak, text, target] {
             if (!weak.lock()) return;
-            const auto reply = juce::JSON::toString(dispatcher.handle(juce::JSON::parse(juce::String(text))), true);
+            juce::String reply;
+            try {
+                const auto parsed = juce::JSON::parse(juce::String(text));
+                reply = juce::JSON::toString(dispatcher.handle(parsed), true);
+            } catch (const std::exception& e) {
+                juce::var err(new juce::DynamicObject());
+                err.getDynamicObject()->setProperty("ok", false);
+                err.getDynamicObject()->setProperty("error", juce::String(e.what()));
+                reply = juce::JSON::toString(err, true);
+            }
             for (auto& c : ws.getClients()) // the client may have disconnected meanwhile
                 if (c.get() == target) c->sendText(reply.toStdString());
         });
@@ -71,9 +81,12 @@ void Server::timerCallback()
     if (ws.getClients().empty()) return;
     if (tick % 3 == 0) { // 10 Hz
         broadcastText(juce::JSON::toString(dispatcher.statusVar(), true));
-        const auto rta = engine.analyzer().rta().result();
+        auto rta = engine.rta().result();
         if (!rta.freq.empty()) {
             const auto [off, cal] = dispatcher.splOffset();
+            // Same mic correction as the transfer function (the file is 0 dB at 1 kHz, so the
+            // SPL calibration is unaffected).
+            for (size_t i = 0; i < rta.freq.size(); ++i) rta.levelDb[i] -= dispatcher.micCalibration().offsetDb(rta.freq[i]);
             std::vector<float> f { 3.0f, float(rta.freq.size()), float(off), cal ? 1.0f : 0.0f };
             f.insert(f.end(), rta.freq.begin(), rta.freq.end());
             f.insert(f.end(), rta.levelDb.begin(), rta.levelDb.end());
@@ -86,7 +99,8 @@ void Server::timerCallback()
         if (r.frames != lastFrames || r.delaySamples != lastDelay) {
             lastFrames = r.frames;
             const size_t n = r.freq.size();
-            std::vector<float> f { 1.0f, float(n), float(r.delaySamples), float(r.frames), r.delayValid ? 1.0f : 0.0f };
+            std::vector<float> f { 1.0f, float(n), float(r.delaySamples), float(r.frames), r.delayValid ? 1.0f : 0.0f,
+                                   r.delayLocked ? 1.0f : 0.0f, float(r.autoDelaySamples) };
             f.insert(f.end(), r.freq.begin(), r.freq.end());
             f.insert(f.end(), r.magDb.begin(), r.magDb.end());
             f.insert(f.end(), r.phaseDeg.begin(), r.phaseDeg.end());

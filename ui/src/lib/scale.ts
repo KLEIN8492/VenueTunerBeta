@@ -1,7 +1,9 @@
 // Pure axis / unit math shared by all plots.
 
-export const logX = (f: number, fMin: number, fMax: number, width: number): number =>
-  (Math.log(f / fMin) / Math.log(fMax / fMin)) * width;
+export const logX = (f: number, fMin: number, fMax: number, width: number): number => {
+  if (!(f > 0) || !(fMin > 0) || !(fMax > fMin)) return 0;
+  return (Math.log(f / fMin) / Math.log(fMax / fMin)) * width;
+};
 
 export const invLogX = (x: number, fMin: number, fMax: number, width: number): number =>
   fMin * Math.pow(fMax / fMin, x / width);

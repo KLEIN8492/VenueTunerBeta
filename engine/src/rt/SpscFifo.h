@@ -45,6 +45,13 @@ public:
         return writePos.load(std::memory_order_acquire) - readPos.load(std::memory_order_acquire);
     }
 
+    size_t space() const
+    {
+        const size_t w = writePos.load(std::memory_order_relaxed);
+        const size_t r = readPos.load(std::memory_order_acquire);
+        return buffer.size() - (w - r);
+    }
+
     void clear() { readPos.store(writePos.load(std::memory_order_acquire), std::memory_order_release); }
 
 private:

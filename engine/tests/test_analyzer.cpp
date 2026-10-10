@@ -172,7 +172,7 @@ TEST_CASE("Log sweep capture recovers delay and gain at full resolution")
         an.pushMeas(meas.data(), block);
         an.process();
     }
-    an.requestSweep(totalLen);
+    an.requestSweep(totalLen, sweep.length);
     an.process();
     REQUIRE(an.sweepGeneration() == 1);
     auto r = an.sweepResult();
@@ -184,10 +184,136 @@ TEST_CASE("Log sweep capture recovers delay and gain at full resolution")
         }
 }
 
+// Plays a sweep (with pre-roll and tail) through `room` and analyses it like the engine does.
+static vt::Analyzer::Result runSweep(vt::Analyzer& an, double sr, double seconds, double tail,
+                                     std::function<float(float)> room)
+{
+    vt::SweepGen sweep { sr, int64_t(seconds * sr) };
+    const int block = 512;
+    const int64_t pre = int64_t(0.25 * sr), totalLen = pre + sweep.length + int64_t(tail * sr);
+    std::vector<float> ref(block), meas(block);
+    for (int64_t pos = -pre; pos < totalLen - pre; pos += block) {
+        for (int i = 0; i < block; ++i) { ref[size_t(i)] = sweep.sample(pos + i); meas[size_t(i)] = room(ref[size_t(i)]); }
+        an.pushPair(ref.data(), meas.data(), block);
+        an.process();
+    }
+    an.requestSweep(totalLen, sweep.length);
+    an.process();
+    return an.sweepResult();
+}
+
+TEST_CASE("Sweep at 96 kHz keeps its low end (whole capture deconvolved)")
+{
+    constexpr double sr = 96000.0;
+    vt::Analyzer an;
+    an.prepare(sr);
+    // Default 3 s sweep + 3.25 s of tail and pre-roll: 600k samples, more than the old 2^19 cap.
+    auto r = runSweep(an, sr, 3.0, 3.0, DelayGain(960, 0.5f));
+    REQUIRE(an.sweepGeneration() == 1);
+    CHECK_THAT(r.delaySamples, WithinAbs(960.0, 0.1));
+    for (size_t i = 0; i < r.freq.size(); ++i)
+        if (r.freq[i] > 25 && r.freq[i] < 16000) CHECK_THAT(r.magDb[i], WithinAbs(-6.02, 0.3));
+}
+
+TEST_CASE("Sweep traces use the live frequency points, and coherence reflects the noise")
+{
+    vt::Analyzer an;
+    an.prepare(kSr);
+    auto clean = runSweep(an, kSr, 3.0, 3.0, DelayGain(480, 0.5f));
+    vt::Analyzer live;
+    live.prepare(kSr);
+    auto lr = runRoom(live, DelayGain(480, 0.5f), 4.0);
+    REQUIRE(clean.freq.size() == lr.freq.size());
+    for (size_t i = 0; i < lr.freq.size(); ++i) CHECK(clean.freq[i] == lr.freq[i]);
+    CHECK(meanOver(clean, clean.coherence, 50, 15000) > 0.99f);
+
+    // Room noise louder than the sweep (a log sweep has a large SNR gain, so it takes that much):
+    // the result must not claim 100 %.
+    vt::Analyzer noisy;
+    noisy.prepare(kSr);
+    vt::PinkNoise hum;
+    hum.setSeed(7);
+    DelayGain d(480, 0.5f);
+    auto r = runSweep(noisy, kSr, 3.0, 3.0, [&](float x) { return d(x) + 3.0f * hum.next(); });
+    CHECK(meanOver(r, r.coherence, 50, 15000) < 0.9f);
+}
+
+TEST_CASE("Sweep and pink noise read the same level for a driver arriving 1 ms after the peak")
+{
+    // Full-range box: LF (big) on time, HF (smaller) 1 ms later — the IR peak is the LF.
+    auto box = [] {
+        return [lf = DelayGain(480, 0.8f), hf = DelayGain(528, 0.3f)](float x) mutable { return lf(x) + hf(x); };
+    };
+    vt::Analyzer live, sw;
+    live.prepare(kSr);
+    sw.prepare(kSr);
+    auto lr = runRoom(live, box(), 8.0);
+    auto sr = runSweep(sw, kSr, 3.0, 3.0, box());
+    REQUIRE(lr.freq.size() == sr.freq.size());
+    CHECK(std::abs(meanOver(lr, lr.magDb, 4000, 16000) - meanOver(sr, sr.magDb, 4000, 16000)) < 1.0f);
+}
+
+TEST_CASE("Averaging set to 1 frame never counts as an averaged capture")
+{
+    vt::Analyzer an;
+    an.prepare(kSr);
+    an.setAveraging(1);
+    auto r = runRoom(an, DelayGain(480, 0.5f), 6.0);
+    CHECK(r.frames > vt::Analyzer::kMinCaptureFrames);
+    CHECK(r.effectiveFrames == 1); // coherence of one frame is always 100 %: meaningless
+}
+
+TEST_CASE("Two arrivals of nearly equal level don't keep restarting the average")
+{
+    // e.g. L and R heard off-centre: 0.5 ms apart, 0.4 dB apart.
+    vt::Analyzer an;
+    an.prepare(kSr);
+    auto r = runRoom(an, [a = DelayGain(480, 0.5f), b = DelayGain(504, 0.48f)](float x) mutable { return a(x) + b(x); }, 10.0);
+    CHECK(r.delayValid);
+    CHECK(r.delayEstimates >= 6);
+    CHECK(r.effectiveFrames >= vt::Analyzer::kMinCaptureFrames);
+}
+
 TEST_CASE("Silent measurement input never yields a valid delay")
 {
     vt::Analyzer an;
     an.prepare(kSr);
     runRoom(an, [](float) { return 0.0f; }, 4.0);
     CHECK_FALSE(an.result().delayValid);
+}
+
+TEST_CASE("Locked delay: one sample short shows the phase slope, the finder keeps its own estimate")
+{
+    vt::Analyzer an;
+    an.prepare(kSr);
+    an.setDelayLock(true, 479.0);
+    auto r = runRoom(an, DelayGain(480, 0.5f));
+    CHECK(r.delayLocked);
+    CHECK_THAT(r.delaySamples, WithinAbs(479.0, 1e-6));
+    CHECK_THAT(r.autoDelaySamples, WithinAbs(480.0, 0.1));
+    // 1 sample left uncompensated = -360° · f / fs → -75° at 10 kHz.
+    CHECK_THAT(meanOver(r, r.phaseDeg, 9900, 10100), WithinAbs(-75.0, 3.0));
+
+    // A sub-sample nudge only moves the phase (no realign): 479.5 → -37.5° at 10 kHz.
+    an.setDelayLock(true, 479.5);
+    r = runRoom(an, DelayGain(480, 0.5f), 3.0);
+    CHECK_THAT(meanOver(r, r.phaseDeg, 9900, 10100), WithinAbs(-37.5, 3.0));
+
+    // Unlock: back to the finder, flat phase.
+    an.setDelayLock(false, 0.0);
+    an.reset();
+    r = runRoom(an, DelayGain(480, 0.5f));
+    CHECK_FALSE(r.delayLocked);
+    CHECK_THAT(meanOver(r, r.phaseDeg, 9900, 10100), WithinAbs(0.0, 3.0));
+}
+
+TEST_CASE("Display grid is 1/48 octave and phase smoothing is independent of magnitude")
+{
+    vt::Analyzer an;
+    an.prepare(kSr);
+    an.setSmoothing(3);
+    an.setPhaseSmoothing(48);
+    auto r = runRoom(an, DelayGain(480, 0.5f));
+    REQUIRE(r.freq.size() > 470);
+    CHECK_THAT(r.freq[48] / r.freq[0], WithinAbs(2.0, 1e-3));
 }

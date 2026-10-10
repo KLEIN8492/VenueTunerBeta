@@ -174,9 +174,8 @@ TEST_CASE("Dispatcher: SPL calibration is stored per mic")
     double ph = 0;
     for (int b = 0; b < int(6 * 48000 / 512); ++b) {
         for (auto& x : mic) { x = float(0.01 * std::sqrt(2.0) * std::sin(ph)); ph += 2 * M_PI * 1000 / 48000; }
-        f.engine.analyzer().pushRef(ref.data(), 512);
-        f.engine.analyzer().pushMeas(mic.data(), 512);
-        f.engine.analyzer().process();
+        f.engine.micMeters().push(mic.data(), 512, 1);
+        f.engine.micMeters().process();
     }
     auto r = f.d->handle(cmd(R"({"id":2,"cmd":"spl.calibrate","args":{"level":94}})"));
     REQUIRE(bool(r["ok"]));
@@ -185,6 +184,35 @@ TEST_CASE("Dispatcher: SPL calibration is stored per mic")
     auto st = f.d->statusVar();
     CHECK(bool(st["spl"]["calibrated"]));
     CHECK(std::abs(double(st["spl"]["slow"][0]) - 94.0) < 0.2);
+}
+
+TEST_CASE("Dispatcher: SPL calibration refuses an unsteady level")
+{
+    Fixture f;
+    f.d->handle(cmd(R"({"id":1,"cmd":"routing.addSource","args":{"type":"mic","name":"Mic FOH","channel":1}})"));
+    std::vector<float> mic(512);
+    double ph = 0;
+    for (int b = 0; b < int(8 * 48000 / 512); ++b) { // −40 dBFS, then 10 dB louder for the last 2 s
+        const double a = b < int(6 * 48000 / 512) ? 0.01 : 0.0316;
+        for (auto& x : mic) { x = float(a * std::sqrt(2.0) * std::sin(ph)); ph += 2 * M_PI * 1000 / 48000; }
+        f.engine.micMeters().push(mic.data(), 512, 1);
+        f.engine.micMeters().process();
+    }
+    auto r = f.d->handle(cmd(R"({"id":2,"cmd":"spl.calibrate","args":{"level":96,"weighting":1,"method":"reference"}})"));
+    CHECK_FALSE(bool(r["ok"]));
+    CHECK(r["error"].toString().contains("steady"));
+}
+
+TEST_CASE("Dispatcher: auto-align refuses to mix subs with full-range outputs")
+{
+    Fixture f;
+    f.engine.unmuteAfterFault();
+    auto& s = f.d->stateForTest();
+    s.measure.micSource = 1;
+    s.outputs[1].lp = { "lr24", 90.0f };
+    auto r = f.d->handle(cmd(R"({"id":1,"cmd":"align.auto","args":{"outputs":[0,1]}})"));
+    CHECK_FALSE(bool(r["ok"]));
+    CHECK(r["error"].toString().contains("Sub"));
 }
 
 TEST_CASE("Dispatcher: undo / redo of tuning changes")
@@ -245,9 +273,8 @@ TEST_CASE("Dispatcher: SPL estimate by default, then reference-meter and datashe
     double ph = 0;
     for (int b = 0; b < int(6 * 48000 / 512); ++b) {
         for (auto& x : mic) { x = float(0.0316 * std::sqrt(2.0) * std::sin(ph)); ph += 2 * M_PI * 1000 / 48000; }
-        f.engine.analyzer().pushRef(ref.data(), 512);
-        f.engine.analyzer().pushMeas(mic.data(), 512);
-        f.engine.analyzer().process();
+        f.engine.micMeters().push(mic.data(), 512, 1);
+        f.engine.micMeters().process();
     }
     auto r = f.d->handle(cmd(R"({"id":2,"cmd":"spl.calibrate","args":{"level":96,"weighting":1,"method":"reference"}})"));
     REQUIRE(bool(r["ok"]));

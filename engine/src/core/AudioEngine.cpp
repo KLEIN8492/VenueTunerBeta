@@ -177,6 +177,7 @@ void AudioEngine::prepare(double sr, int block)
     genGain.reset(sr, 0.5); // 500 ms fade in/out
     genGain.setCurrentAndTargetValue(kGenFloor);
     analyzerImpl.requestReset(sr);
+    meters.setSampleRate(sr); // the Leq only restarts if the rate really changed
     for (auto& a : extra)
         if (auto* an = a.load()) an->requestReset(sr);
 }
@@ -289,21 +290,23 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
             juce::FloatVectorOperations::copy(out[op.channel], buf, n);
     }
 
-    // Measurement: reference = generator (internal loopback) or a physical input.
+    // Sound level / RTA: always the user's measurement mic, whatever a job does with the analyzer.
     const auto& m = p.measure;
+    if (m.splInput >= 0 && m.splInput < numIn && in[m.splInput] != nullptr)
+        meters.push(in[m.splInput], n, m.splInput);
+
+    // Measurement: reference = generator (internal loopback) or a physical input.
     if (m.micInput >= 0 && m.micInput < numIn && in[m.micInput] != nullptr) {
         const float* ref = genBuf.data();
         if (m.ref != RefSource::Generator)
             ref = (m.refInput >= 0 && m.refInput < numIn && in[m.refInput] != nullptr) ? in[m.refInput] : zeroBuf.data();
-        analyzerImpl.pushRef(ref, n);
-        analyzerImpl.pushMeas(in[m.micInput], n);
+        analyzerImpl.pushPair(ref, in[m.micInput], n);
         // Extra mics: same reference, measured at the same time.
         for (int k = 0; k < m.numExtra && k < kMaxMics - 1; ++k) {
             const int ch = m.extraMicInputs[k];
             auto* an = extra[size_t(k)].load(std::memory_order_acquire);
             if (an == nullptr || ch < 0 || ch >= numIn || in[ch] == nullptr) continue;
-            an->pushRef(ref, n);
-            an->pushMeas(in[ch], n);
+            an->pushPair(ref, in[ch], n);
         }
     }
 }

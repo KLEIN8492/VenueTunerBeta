@@ -60,8 +60,6 @@ void Analyzer::configureBands()
 void Analyzer::prepare(double sampleRate)
 {
     sr = sampleRate;
-    splMeter.prepare(sr);
-    rtaMeter.prepare(sr);
     resetRequested.store(false);
     refFifo.clear();
     measFifo.clear();
@@ -76,9 +74,11 @@ void Analyzer::doReset()
     nextDelayAt = L;
     configureBands();
     delayValid = false;
+    delayCount = 0;
     alignInt = 0;
     delayTotal.store(0.0);
     irExcerpt.clear();
+    if (lockOn.load()) lockPending.store(true); // re-apply the user's delay after a reset
     std::lock_guard<std::mutex> l(resultLock);
     latest = Result {};
     latest.sampleRate = float(sr);
@@ -86,20 +86,26 @@ void Analyzer::doReset()
 
 bool Analyzer::process()
 {
+    struct ApplyLock { Analyzer& a; ~ApplyLock() { if (a.lockOn.load() && a.lockPending.exchange(false)) a.applyLock(); } } applyLockOnExit { *this };
     if (resetRequested.exchange(false)) {
-        if (const double p = pendingSr.exchange(0.0); p > 0.0) {
-            sr = p;
-            splMeter.prepare(sr); // only on a rate change: a TF reset must not reset the Leq
-            rtaMeter.prepare(sr);
-        }
+        if (const double p = pendingSr.exchange(0.0); p > 0.0) sr = p;
+        refFifo.clear();
+        measFifo.clear();
+        overflow.store(false);
+        doReset();
+    }
+    // A dropped block (analysis didn't keep up) would otherwise leave a hole in one
+    // history ring. Throw both FIFOs away and restart averaging from a clean lock-step.
+    if (overflow.exchange(false)) {
         refFifo.clear();
         measFifo.clear();
         doReset();
+        return false;
     }
 
     // Consume ref and meas in lock-step (the audio thread always pushes both).
     if (const int64_t len = sweepRequest.exchange(0); len > 0)
-        analyseSweep(std::min<int64_t>(len, std::min<int64_t>(total, kHistory)));
+        analyseSweep(std::min<int64_t>(len, std::min<int64_t>(total, kHistory)), sweepLength.load());
 
     const size_t n = std::min(refFifo.available(), measFifo.available());
     if (n == 0) return false;
@@ -114,8 +120,6 @@ bool Analyzer::process()
         measFifo.pop(scratch.data(), chunk);
         for (size_t i = 0; i < chunk; ++i) measHist[size_t(total + int64_t(i)) & (kHistory - 1)] = scratch[i];
         measMs.store(measMs.load() + a * (meanSquare() - measMs.load()));
-        splMeter.process(scratch.data(), int(chunk));
-        rtaMeter.process(scratch.data(), int(chunk));
         total += int64_t(chunk);
         done += chunk;
     }
@@ -173,13 +177,36 @@ void Analyzer::findDelay()
         if (std::abs(ir[k]) > std::abs(ir[peak])) peak = k;
     }
     const double rms = std::sqrt(sumSq / L);
+    const double strongest = std::abs(ir[peak]);
+    if (!(strongest > 0.0) || strongest < 10.0 * rms) { // silence or no clear arrival
+        if (!lockOn.load()) delayValid = false;            // a locked delay survives a pause in the noise
+        return;
+    }
+
+    // Two arrivals of nearly the same level (L+R heard off-centre, a strong reflection): the
+    // strongest one can swap from one estimate to the next, and every swap would restart the
+    // averaging. Stay on the arrival already locked while it is within 2 dB of the strongest.
+    if (delayValid && std::abs(peak - alignInt) > 1) {
+        int held = -1;
+        for (int k = std::max(0, alignInt - 2); k <= std::min(L - 1, alignInt + 2); ++k)
+            if (held < 0 || std::abs(ir[k]) > std::abs(ir[held])) held = k;
+        if (held >= 0 && std::abs(ir[held]) >= 0.8 * strongest) peak = held;
+    }
     const double pk = std::abs(ir[peak]);
-    if (!(pk > 0.0) || pk < 10.0 * rms) { delayValid = false; return; } // silence or no clear arrival
 
     const double a = std::abs(ir[(peak - 1 + M) % M]), b = pk, c = std::abs(ir[peak + 1]);
     const double denom = a - 2 * b + c;
     const double frac = std::abs(denom) > 1e-12 ? 0.5 * (a - c) / denom : 0.0;
     const double d = peak + std::clamp(frac, -0.5, 0.5);
+    autoDelay.store(d);
+
+    if (lockOn.load()) { // the user's delay rules: keep the alignment, only refresh the IR view
+        ++delayCount;
+        irStart = std::max(0, peak - 2048);
+        const int lockedLen = std::min(8192, L - irStart);
+        irExcerpt.assign(ir + irStart, ir + irStart + lockedLen);
+        return;
+    }
 
     if (!delayValid || std::abs(d - double(alignInt)) > 1.0) {
         // Alignment moved: restart averaging so frames with different alignments never mix.
@@ -191,10 +218,26 @@ void Analyzer::findDelay()
     }
     delayTotal.store(d);
     delayValid = true;
+    ++delayCount;
 
     irStart = std::max(0, peak - 2048);
     const int irLen = std::min(8192, L - irStart);
     irExcerpt.assign(ir + irStart, ir + irStart + irLen);
+}
+
+void Analyzer::applyLock()
+{
+    const double d = lockSamples.load();
+    if (!delayValid || std::abs(d - double(alignInt)) > 0.5) {
+        // Beyond half a sample the frames themselves must move: realign and restart averaging.
+        alignInt = int(std::lround(d));
+        for (auto& band : bands) {
+            band.clear();
+            band.nextFrameEnd = std::max<int64_t>(band.n + alignInt + 1, total);
+        }
+    }
+    delayTotal.store(d); // the sub-sample remainder is applied to the phase in buildResult()
+    delayValid = true;
 }
 
 void Analyzer::addFrame(Band& band, int64_t frameEnd)
@@ -234,18 +277,28 @@ void Analyzer::buildResult()
     r.ir = irExcerpt;
     r.irStart = irStart;
     int minFrames = bands.empty() ? 0 : bands[0].frameCount;
-    for (auto& band : bands) minFrames = std::min(minFrames, band.frameCount);
+    int effective = minFrames;
+    const int avg = averaging.load();
+    for (auto& band : bands) {
+        minFrames = std::min(minFrames, band.frameCount);
+        effective = std::min(effective, std::min(band.frameCount, std::min(1024, avg * band.avgScale)));
+    }
     r.frames = minFrames;
+    r.effectiveFrames = effective;
+    r.delayEstimates = delayCount;
+    r.autoDelaySamples = autoDelay.load();
+    r.delayLocked = lockOn.load();
 
     if (minFrames > 0) {
         const double frac = r.delaySamples - double(alignInt); // sub-sample remainder
-        const int sm = smoothing.load();
-        const double halfBand = sm > 0 ? 0.5 / sm : 1.0 / 48.0;
+        const int sm = smoothing.load(), psm = phaseSmoothing.load();
+        const double halfBand = sm > 0 ? 0.5 / sm : 1.0 / 96.0;
+        const double phaseHalf = psm > 0 ? 0.5 / psm : 1.0 / 96.0;
         MicCal c;
         { std::lock_guard<std::mutex> l(calLock); c = cal; }
 
         for (int i = 0;; ++i) {
-            const double f = 20.0 * std::pow(2.0, i / 24.0);
+            const double f = 20.0 * std::pow(2.0, i / double(kPointsPerOctave));
             if (f > 20000.0) break;
             const Band* bp = &bands.back();
             for (auto& band : bands)
@@ -258,20 +311,33 @@ void Analyzer::buildResult()
             if (sm == 0 || k1 < k0) k0 = k1 = int(std::lround(f / df));
             k0 = std::clamp(k0, 1, N / 2); k1 = std::clamp(k1, k0, N / 2);
 
-            double px = 0, py = 0;
+            // Magnitude and coherence are averaged per bin over the smoothing band (weighted by
+            // the reference power), phase as a vector. A vector average of the magnitude would
+            // act as a hidden time window around the IR peak: an HF driver arriving 1 ms off the
+            // peak would read low, and the same speaker would look different in a sweep.
+            double px = 0, h2 = 0, coh = 0;
             std::complex<double> pxy;
             for (int k = k0; k <= k1; ++k) {
                 // Remove the fractional part of the delay so phase is flat for a pure delay.
                 const double w = 2.0 * kPi * (k * df) * frac / sr;
-                pxy += band.sxy[size_t(k)] * std::polar(1.0, w);
-                px += band.sxx[size_t(k)];
-                py += band.syy[size_t(k)];
+                const auto sxy = band.sxy[size_t(k)] * std::polar(1.0, w);
+                const double sxx = band.sxx[size_t(k)], syy = band.syy[size_t(k)];
+                pxy += sxy;
+                px += sxx;
+                if (sxx > 0) h2 += std::norm(sxy) / sxx;  // = Sxx·|H|²
+                if (syy > 0) coh += std::norm(sxy) / syy; // = Sxx·γ²
             }
-            const std::complex<double> h = px > 0 ? pxy / px : std::complex<double> {};
+            // Phase over its own (usually narrower) band.
+            int p0 = int(std::ceil(f * std::pow(2.0, -phaseHalf) / df));
+            int p1 = int(std::floor(f * std::pow(2.0, phaseHalf) / df));
+            if (psm == 0 || p1 < p0) p0 = p1 = int(std::lround(f / df));
+            p0 = std::clamp(p0, 1, N / 2); p1 = std::clamp(p1, p0, N / 2);
+            std::complex<double> pph;
+            for (int k = p0; k <= p1; ++k) pph += band.sxy[size_t(k)] * std::polar(1.0, 2.0 * kPi * (k * df) * frac / sr);
             r.freq.push_back(float(f));
-            r.magDb.push_back(float(20.0 * std::log10(std::max(std::abs(h), 1e-9))) - c.offsetDb(float(f)));
-            r.phaseDeg.push_back(float(std::arg(h) * 180.0 / kPi));
-            r.coherence.push_back(px > 0 && py > 0 ? float(std::norm(pxy) / (px * py)) : 0.0f);
+            r.magDb.push_back(float(10.0 * std::log10(std::max(px > 0 ? h2 / px : 0.0, 1e-18))) - c.offsetDb(float(f)));
+            r.phaseDeg.push_back(float(std::arg(pph) * 180.0 / kPi));
+            r.coherence.push_back(px > 0 ? float(std::clamp(coh / px, 0.0, 1.0)) : 0.0f);
         }
     }
     std::lock_guard<std::mutex> l(resultLock);
@@ -282,10 +348,17 @@ void Analyzer::buildResult()
 
 namespace vt {
 
-// REW-style sweep analysis: regularised deconvolution over the whole capture → impulse
-// response → window around the arrival (−10 ms … +500 ms) → transfer function.
-void Analyzer::analyseSweep(int64_t len)
+// Sweep analysis: regularised deconvolution over the whole capture → impulse response →
+// frequency-dependent window around the arrival → transfer function on the same frequency
+// points, with the same time windows, as the live (multi-time-window) measurement — so a sweep
+// and pink noise of the same speaker read the same, and room reflections are excluded in the
+// highs just as they are live. "Coherence" comes from the signal-to-noise ratio: the windowed
+// arrival against an equal window of the late IR (noise floor, or late reverb in a big room).
+void Analyzer::analyseSweep(int64_t len, int64_t sweepSamples)
 {
+    // Linear deconvolution needs ≥ 2·len points. The history is 2^20 samples, so the FFT never
+    // exceeds 2^21: the whole capture is always used and the start of the sweep (the lows) is
+    // never dropped, at any sample rate.
     int order = 1;
     while ((int64_t(1) << order) < 2 * len) ++order;
     const int M = 1 << order;
@@ -319,60 +392,95 @@ void Analyzer::analyseSweep(int64_t len)
     const double den = a - 2 * b + c;
     const double d = peak + (std::abs(den) > 1e-12 ? std::clamp(0.5 * (a - c) / den, -0.5, 0.5) : 0.0);
 
-    // Window: 10 ms raised-cosine fade-in before the peak, flat to +450 ms, 50 ms fade-out.
-    const int pre = int(0.01 * sr), post = int(0.5 * sr), fadeOut = int(0.05 * sr);
-    int wOrder = 1;
-    while ((1 << wOrder) < 2 * (pre + post)) ++wOrder;
-    const int W = 1 << wOrder;
-    juce::dsp::FFT wf(wOrder);
-    std::vector<float> w(size_t(2 * W), 0.0f);
-    for (int i = -pre; i < post; ++i) {
-        double g = 1.0;
-        if (i < 0) g = 0.5 - 0.5 * std::cos(M_PI * double(i + pre) / pre);
-        else if (i > post - fadeOut) g = 0.5 + 0.5 * std::cos(M_PI * double(i - (post - fadeOut)) / fadeOut);
-        // Store with the peak at index 0 (wrap negatives) so the phase is relative to the arrival.
-        w[size_t((i + W) % W)] = float(g * ir[(peak + i + M) % M]);
+    // IR lags fully covered by the capture: up to the end of the tail recorded after the sweep.
+    const int64_t covered = sweepSamples > 0 ? std::max<int64_t>(0, len - sweepSamples) : len / 2;
+    const int noiseEnd = int(std::min<int64_t>(peak + int64_t(2.9 * sr), std::min<int64_t>(covered - int64_t(0.05 * sr), M / 2)));
+
+    // Time windows (after the arrival), matching the live multi-time-window bands.
+    struct Win { double fHi, postSec; };
+    std::vector<Win> wins;
+    if (multiWindow.load()) wins = { { 200, 0.5 }, { 800, 0.17 }, { 3200, 0.043 }, { 1e9, 0.011 } };
+    else wins = { { 1e9, 0.5 } };
+
+    struct Spectrum { int W = 0; std::vector<float> sig, noise; bool hasNoise = false; };
+    auto windowed = [&](int pre, int post, int at, int Wsz) {
+        std::vector<float> w(size_t(2 * Wsz), 0.0f);
+        const int fadeOut = std::max(1, post / 4);
+        for (int i = -pre; i < post; ++i) {
+            double g = 1.0;
+            if (i < 0) g = 0.5 - 0.5 * std::cos(kPi * double(i + pre) / pre);
+            else if (i > post - fadeOut) g = 0.5 + 0.5 * std::cos(kPi * double(i - (post - fadeOut)) / fadeOut);
+            // Peak at index 0 (negatives wrapped) so the phase is relative to the arrival.
+            w[size_t((i + Wsz) % Wsz)] = float(g * ir[(at + i + M) % M]);
+        }
+        return w;
+    };
+    std::vector<Spectrum> spec(wins.size());
+    for (size_t b = 0; b < wins.size(); ++b) {
+        const int post = std::max(16, int(wins[b].postSec * sr));
+        const int pre = std::max(8, std::min(int(0.01 * sr), post / 4));
+        int wOrder = 1;
+        while ((1 << wOrder) < 2 * (pre + post)) ++wOrder;
+        auto& s = spec[b];
+        s.W = 1 << wOrder;
+        juce::dsp::FFT wf(wOrder);
+        s.sig = windowed(pre, post, peak, s.W);
+        wf.performRealOnlyForwardTransform(s.sig.data());
+        // Noise window: same shape, late in the IR, clear of this window.
+        const int noiseAt = noiseEnd - post;
+        if (noiseAt - pre > peak + post) {
+            s.noise = windowed(pre, post, noiseAt, s.W);
+            wf.performRealOnlyForwardTransform(s.noise.data());
+            s.hasNoise = true;
+        }
     }
-    wf.performRealOnlyForwardTransform(w.data());
-    const auto* H = reinterpret_cast<const cfloat*>(w.data());
 
     Result r;
     r.sampleRate = float(sr);
     r.delaySamples = d;
     r.delayValid = true;
-    r.frames = 1;
-    const double df = sr / W, frac = d - peak;
+    r.frames = r.effectiveFrames = 1;
+    const double frac = d - peak;
     const int sm = smoothing.load();
-    const double halfBand = sm > 0 ? 0.5 / sm : 1.0 / 96.0;
+    const double halfBand = sm > 0 ? 0.5 / sm : 1.0 / 48.0;
     MicCal cal_;
     { std::lock_guard<std::mutex> l(calLock); cal_ = cal; }
     for (int i = 0;; ++i) {
-        const double fr = 20.0 * std::pow(2.0, i / 48.0);
+        const double fr = 20.0 * std::pow(2.0, i / double(kPointsPerOctave)); // same points as the live measurement
         if (fr > 20000.0) break;
+        size_t b = 0;
+        while (b + 1 < wins.size() && fr >= wins[b].fHi) ++b;
+        const auto& s = spec[b];
+        const auto* H = reinterpret_cast<const cfloat*>(s.sig.data());
+        const auto* N = reinterpret_cast<const cfloat*>(s.noise.data());
+        const double df = sr / s.W;
         int k0 = int(std::ceil(fr * std::pow(2.0, -halfBand) / df)), k1 = int(std::floor(fr * std::pow(2.0, halfBand) / df));
         if (k1 < k0) k0 = k1 = int(std::lround(fr / df));
-        k0 = std::clamp(k0, 1, W / 2); k1 = std::clamp(k1, k0, W / 2);
+        k0 = std::clamp(k0, 1, s.W / 2); k1 = std::clamp(k1, k0, s.W / 2);
         std::complex<double> h;
-        double p = 0;
+        double p = 0, pn = 0;
         for (int k = k0; k <= k1; ++k) {
             const auto v = std::complex<double>(H[k]) * std::polar(1.0, 2.0 * kPi * (k * df) * frac / sr);
             h += v;
             p += std::norm(v);
+            if (s.hasNoise) pn += std::norm(std::complex<double>(N[k]));
         }
         const double n = k1 - k0 + 1;
         // Power average for magnitude (no cancellation), complex average for phase.
         r.freq.push_back(float(fr));
         r.magDb.push_back(float(10.0 * std::log10(std::max(p / n, 1e-18))) - cal_.offsetDb(float(fr)));
         r.phaseDeg.push_back(float(std::arg(h) * 180.0 / kPi));
-        r.coherence.push_back(1.0f);
+        // γ² = SNR / (1 + SNR) = 1 − noise / (signal + noise), as for an additive-noise channel.
+        r.coherence.push_back(s.hasNoise && p > 0 ? float(std::clamp(1.0 - pn / p, 0.0, 1.0)) : 1.0f);
     }
     // Room decay from the direct sound onwards (up to 3 s or what was captured).
     {
-        const int tailLen = std::min(int(3.0 * sr), M / 2 - peak);
+        const int tailLen = int(std::min<int64_t>(int64_t(3.0 * sr), std::min<int64_t>(M / 2 - peak, std::max<int64_t>(0, covered - peak))));
         std::vector<float> tail(size_t(std::max(0, tailLen)));
         for (int i = 0; i < tailLen; ++i) tail[size_t(i)] = ir[(peak + i) % M];
         r.decay = roomDecay(tail, sr);
     }
+    const int pre = int(0.01 * sr), post = int(0.5 * sr);
     r.irStart = std::max(0, peak - pre);
     r.ir.assign(size_t(pre + post), 0.0f);
     for (int i = 0; i < pre + post; ++i) r.ir[size_t(i)] = ir[(r.irStart + i) % M];

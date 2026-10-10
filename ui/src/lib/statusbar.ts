@@ -25,6 +25,7 @@ export function mountStatusBar(el: HTMLElement, engine: Engine): void {
       s.faultMuted ? `<span class="bad">OUTPUTS MUTED</span>` : '',
       s.muteAll ? `<span class="bad">MUTE ALL</span>` : '',
       s.error ? `<span class="bad">${esc(s.error)}</span>` : '',
+      s.warning ? `<span class="warn" title="${esc(s.warning)}">⚠ ${esc(s.warning.split(':')[0])}</span>` : '',
       missingPatch(engine, s),
     ].join('');
   };

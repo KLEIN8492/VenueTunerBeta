@@ -3,6 +3,8 @@
 // after saving a "before" snapshot.
 import { autoEq, type Target, type AutoEqResult } from './autoeq';
 import { alignPair, type AlignResult } from './xoalign';
+import { spatialAverage } from './average';
+import { onGrid } from './traceimport';
 import { outputResponse } from './filters';
 import { esc } from './statusbar';
 import type { Engine } from './engine';
@@ -21,21 +23,13 @@ const opt = (v: string | number, label: string, sel: boolean) => `<option value=
 const stamp = () => new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
 const sr = (e: Engine) => e.status?.sampleRate || e.state?.device.sampleRate || 48000;
 
-// Power-average of the visible traces (spatial average of several mic positions).
-function average(ts: StoredTrace[]): StoredTrace | null {
-  if (!ts.length) return null;
-  const n = ts[0].freq.length;
-  const mag: number[] = [], coh: number[] = [];
-  for (let i = 0; i < n; i++) {
-    mag.push(10 * Math.log10(ts.reduce((a, t) => a + Math.pow(10, t.mag[i] / 10), 0) / ts.length));
-    coh.push(Math.min(...ts.map((t) => t.coh[i])));
-  }
-  return { ...ts[0], name: ts.length > 1 ? `AVG(${ts.length})` : ts[0].name, mag, coh };
-}
+// Level-matched power average of the visible traces (spatial average of mic positions).
+const average = (ts: StoredTrace[]) => spatialAverage(ts, ts.length > 1 ? `AVG(${ts.length})` : ts[0]?.name ?? '');
 
-// PEQ-only response of an output (crossovers/all-pass stay: they're part of the system).
+// PEQ-only response of an output (crossovers/all-pass stay: they're part of the system). The air
+// shelf stays too: it keeps working after the new EQ, so the fit must see it.
 function peqOnly(o: OutputConfig, rate: number, freq: number[]): number[] {
-  return outputResponse({ ...o, hp: { type: 'off', freq: 100 }, lp: { type: 'off', freq: 100 }, ap: [], polarityInvert: false }, rate, freq).magDb;
+  return outputResponse({ ...o, hp: { type: 'off', freq: 100 }, lp: { type: 'off', freq: 100 }, ap: [], polarityInvert: false, airGainDb: 0 }, rate, freq).magDb;
 }
 
 // ---------------------------------------------------------------- Auto-EQ
@@ -161,8 +155,9 @@ export function mountXoAlign(el: HTMLElement, ctx: TuneCtx): () => void {
 
   $('xaCompute').onclick = () => {
     const ts = ctx.traces();
-    const a = ts[Number(($('xaA') as HTMLSelectElement).value)], b = ts[Number(($('xaB') as HTMLSelectElement).value)];
-    if (!a || !b || a === b) return alert('Choose two different traces: the top alone and the sub alone.');
+    const ta = ts[Number(($('xaA') as HTMLSelectElement).value)], tb = ts[Number(($('xaB') as HTMLSelectElement).value)];
+    if (!ta || !tb || ta === tb) return alert('Choose two different traces: the top alone and the sub alone.');
+    const a = onGrid(ta), b = onGrid(tb); // compare the same frequencies, whatever each was captured with
     const r = alignPair(a, b, Number(($('xaLo') as HTMLInputElement).value), Number(($('xaHi') as HTMLInputElement).value));
     result = { ...r, a, b, oa: Number(($('xaOA') as HTMLSelectElement).value), ob: Number(($('xaOB') as HTMLSelectElement).value) };
     ctx.setOverlay([

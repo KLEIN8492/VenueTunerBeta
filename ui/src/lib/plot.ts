@@ -163,20 +163,30 @@ export class Plot {
     const n = Math.min(t.x.length, t.y.length);
     ctx.strokeStyle = t.color;
     ctx.lineWidth = t.width ?? 1.25;
-    const pts: [number, number][] = [];
-    for (let i = 0; i < n; i++) pts.push([this.px(t.x[i], W), linY(t.y[i], o.yMin, o.yMax, H)]);
+    const pts: ([number, number] | null)[] = [];
+    for (let i = 0; i < n; i++) {
+      const x = t.x[i], y = t.y[i];
+      pts.push(Number.isFinite(x) && Number.isFinite(y) ? [this.px(x, W), linY(y, o.yMin, o.yMax, H)] : null);
+    }
     if (!t.alpha && !t.wrap) {
       ctx.beginPath();
-      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      let drawing = false;
+      for (const p of pts) {
+        if (!p) { drawing = false; continue; }
+        if (drawing) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]);
+        drawing = true;
+      }
       ctx.stroke();
       return;
     }
     for (let i = 0; i + 1 < n; i++) {
+      const aPt = pts[i], bPt = pts[i + 1];
+      if (!aPt || !bPt) continue;
       if (t.wrap && Math.abs(t.y[i + 1] - t.y[i]) > t.wrap) continue;
       const a = t.alpha ? Math.min(t.alpha[i], t.alpha[i + 1]) : 1;
       if (a <= 0.01) continue;
       ctx.globalAlpha = a;
-      ctx.beginPath(); ctx.moveTo(...pts[i]); ctx.lineTo(...pts[i + 1]); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(...aPt); ctx.lineTo(...bPt); ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }

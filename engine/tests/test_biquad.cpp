@@ -84,3 +84,23 @@ TEST_CASE("Section processes like its transfer function")
     }
     CHECK_THAT(20 * std::log10(peak), WithinAbs(6.0, 0.02));
 }
+
+TEST_CASE("LR-matched all-pass equals the Linkwitz-Riley crossover sum")
+{
+    // A Linkwitz-Riley LP+HP sums to an all-pass; the "LR-matched" all-pass must have exactly
+    // that phase (half the LR order, Butterworth poles), so a speaker can be phase-matched to
+    // another one that went through that crossover.
+    for (auto [type, xo] : { std::pair { "lr24", XoType::LR24 }, std::pair { "lr48", XoType::LR48 } }) {
+        auto ap = design::allpassMatched(type, 120, sr);
+        auto hp = design::crossover(xo, true, 120, sr), lp = design::crossover(xo, false, 120, sr);
+        for (double f = 20; f <= 2000; f *= 1.25) {
+            const auto sum = chainResponse(hp.data(), int(hp.size()), f, sr) + chainResponse(lp.data(), int(lp.size()), f, sr);
+            const auto a = chainResponse(ap.data(), int(ap.size()), f, sr);
+            INFO(type << " at " << f << " Hz");
+            CHECK_THAT(std::abs(a), WithinAbs(1.0, 1e-9));
+            CHECK_THAT(std::abs(a - sum), WithinAbs(0.0, 1e-6));
+        }
+    }
+    CHECK(design::allpassMatched("1st", 100, sr).size() == 1);
+    CHECK(design::allpassMatched("lr48", 100, sr).size() == 2);
+}

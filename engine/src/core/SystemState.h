@@ -37,7 +37,8 @@ struct XoConfig
 struct ApBand
 {
     bool on = true;
-    int order = 2;
+    int order = 2;              // kept for older files: 1 → "1st", 2 → "2nd"
+    juce::String type = "2nd";  // 1st | 2nd | lr24 | lr48 (crossover-matched)
     float freq = 1000.0f, q = 0.7f;
 };
 
@@ -96,7 +97,8 @@ struct MeasureConfig
     juce::String ref = "generator"; // generator (internal loopback) | source
     int refSource = -1;
     int averaging = 16;
-    int smoothing = 24; // 1/N octave, 0 = none
+    int smoothing = 24;      // magnitude: 1/N octave, 0 = none
+    int phaseSmoothing = 48; // phase: 1/N octave, 0 = none (kept fine: HF phase turns fast)
     bool multiWindow = true;
 };
 

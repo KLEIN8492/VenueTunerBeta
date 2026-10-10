@@ -108,7 +108,7 @@ TEST_CASE("Filter config round-trips and validates")
     o.peq.push_back({ false, "highshelf", 8000.0f, 3.0f, 0.7f });
     o.hp = { "lr24", 90.0f };
     o.lp = { "bw12", 18000.0f };
-    o.ap.push_back({ true, 2, 120.0f, 0.8f });
+    o.ap.push_back({ true, 2, "2nd", 120.0f, 0.8f });
     o.fir = { true, "/tmp/x.wav", 1024, 511 };
     vt::SystemState back;
     juce::String err;

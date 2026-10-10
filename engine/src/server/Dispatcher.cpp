@@ -1,6 +1,7 @@
 #include "server/Dispatcher.h"
 #include "dsp/FirLoader.h"
 #include "measure/Quality.h"
+#include "core/LatencyInfo.h"
 
 namespace vt {
 
@@ -41,6 +42,13 @@ Dispatcher::Latency Dispatcher::ioLatency(const juce::String& outDev, const juce
     const auto it = state.cal.ioLatency.find(latencyKey(outDev, inDev, sr, buffer));
     if (it != state.cal.ioLatency.end()) return { it->second, true };
     return { double(driverReported), false };
+}
+
+bool Dispatcher::sharedClockNow(const juce::String& in, const juce::String& out)
+{
+    const auto pair = in + "|" + out;
+    if (pair != clockPair) { clockPair = pair; clockShared = vt::sharedClock(in, out); }
+    return clockShared;
 }
 
 Dispatcher::Latency Dispatcher::currentLatency()
@@ -109,6 +117,23 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "unmute.fault") { engine.unmuteAfterFault(); return statusVar(); }
 
     if (cmd == "measure.reset") { engine.analyzer().reset(); return true; }
+    if (cmd == "measure.delayLock") { // lock the measurement delay (ms); off returns to the delay finder
+        auto& an = engine.analyzer();
+        const bool on = bool(args["on"]);
+        const double samples = args.hasProperty("ms") ? double(args["ms"]) * 1e-3 * sampleRate()
+                                                      : an.result().delaySamples;
+        if (on && (!std::isfinite(samples) || samples < 0.0 || samples > 0.9 * Analyzer::kHistory)) { err = "delay out of range"; return false; }
+        an.setDelayLock(on, samples);
+        return true;
+    }
+    if (cmd == "measure.delayNudge") { // move the locked delay by ms (locks at the current delay first)
+        auto& an = engine.analyzer();
+        const auto r = an.result();
+        const double samples = r.delaySamples + double(args["ms"]) * 1e-3 * sampleRate();
+        if (!std::isfinite(samples) || samples < 0.0) { err = "delay out of range"; return false; }
+        an.setDelayLock(true, samples);
+        return true;
+    }
     if (cmd == "measure.capture") {
         const auto r = engine.analyzer().result();
         if (r.frames == 0) { err = "no measurement data yet"; return {}; }
@@ -123,17 +148,28 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     if (cmd == "matrix.cancel") { if (matrixJob.active) finishMatrix("cancelled"); return true; }
 
     // Calibrate the main mic: with a calibrator (Z, 1 kHz tone) or by matching what a reference
-    // meter shows (in that meter's weighting: 0 Z, 1 A, 2 C; Slow).
+    // meter shows (in that meter's weighting: 0 Z, 1 A, 2 C) over the same steady pink noise.
     if (cmd == "spl.calibrate") {
         const int mic = state.measure.micSource;
-        if (mic < 0) { err = "choose the measurement mic first"; return {}; }
+        if (mic < 0 || mic >= int(state.sources.size())) { err = "choose the measurement mic first"; return {}; }
         const double level = args.hasProperty("level") ? double(args["level"]) : 94.0;
         const int w = args.hasProperty("weighting") ? std::clamp(int(args["weighting"]), 0, 2) : 0;
         const auto method = args["method"].toString() == "reference" ? juce::String("reference") : juce::String("calibrator");
-        const auto r = engine.analyzer().spl().reading();
-        if (r.slow[size_t(w)] < -100) { err = method == "calibrator" ? "no signal on the mic: put the calibrator on it" : "no signal on the mic"; return {}; }
+        const auto r = engine.spl().reading();
+        const double last1s = r.leqWindow[0][size_t(w)], last10s = r.leqWindow[1][size_t(w)];
+        if (last1s < -100) { err = method == "calibrator" ? "no signal on the mic: put the calibrator on it" : "no signal on the mic"; return {}; }
+        double measured = last1s;
+        if (method == "calibrator") {
+            // A calibrator is a steady tone: once it is seated, Fast and the 1 s Leq agree.
+            if (std::abs(r.fast[size_t(w)] - last1s) > 0.5) { err = "level not steady yet: wait until the calibrator is seated and running, then press Calibrate again"; return {}; }
+        } else {
+            // Pink noise wanders about ±1 dB on a Slow meter: compare 10 s Leq with 10 s Leq,
+            // and only if those 10 s were steady.
+            if (std::abs(last1s - last10s) > 1.5) { err = "level not steady: keep the pink noise playing at a constant level for 10 s, then match"; return {}; }
+            measured = last10s;
+        }
         const auto& name = state.sources[size_t(mic)].name;
-        state.cal.splOffset[name] = level - r.slow[size_t(w)];
+        state.cal.splOffset[name] = level - measured;
         state.cal.splMethod[name] = method;
         commit();
         return state.cal.splOffset[name];
@@ -141,7 +177,7 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
     // Offset computed from datasheet values (mic sensitivity, interface level, gain): an estimate.
     if (cmd == "spl.setOffset") {
         const int mic = state.measure.micSource;
-        if (mic < 0) { err = "choose the measurement mic first"; return {}; }
+        if (mic < 0 || mic >= int(state.sources.size())) { err = "choose the measurement mic first"; return {}; }
         const double off = double(args["offsetDb"]);
         if (!std::isfinite(off) || off < 40 || off > 200) { err = "offset out of range"; return {}; }
         const auto& name = state.sources[size_t(mic)].name;
@@ -164,8 +200,8 @@ juce::var Dispatcher::run(const juce::String& cmd, const juce::var& args, juce::
         commit();
         return toVar(state);
     }
-    if (cmd == "spl.resetLeq") { engine.analyzer().spl().resetLeq(); return true; }
-    if (cmd == "rta.setResolution") { engine.analyzer().rta().setResolution(int(args["bands"])); return true; }
+    if (cmd == "spl.resetLeq") { engine.micMeters().resetLeq(); return true; }
+    if (cmd == "rta.setResolution") { engine.rta().setResolution(int(args["bands"])); return true; }
 
     if (cmd == "fir.load") {
         recordUndo("fir");
@@ -346,9 +382,16 @@ void Dispatcher::commit(bool measureChanged)
     }
     applyTransient(p);
     engine.setParams(p);
-    engine.analyzer().setMultiWindow(state.measure.multiWindow);
-    engine.analyzer().setAveraging(state.measure.averaging);
-    engine.analyzer().setSmoothing(state.measure.smoothing);
+    // Every mic gets the same analysis settings. Automatic captures always average at least 16
+    // frames, whatever the display is set to: their quality check needs real averages.
+    const bool job = matrixJob.active || alignJob.active || calib.active;
+    for (int k = 0; k < kMaxMics; ++k)
+        if (auto* an = engine.analyzerForSlot(k)) {
+            an->setMultiWindow(state.measure.multiWindow);
+            an->setAveraging(job ? std::max(16, state.measure.averaging) : state.measure.averaging);
+            an->setSmoothing(state.measure.smoothing);
+            an->setPhaseSmoothing(state.measure.phaseSmoothing);
+        }
     if (measureChanged) engine.analyzer().reset();
     autosavePending = true;
     if (onStateChanged) onStateChanged();
@@ -393,7 +436,7 @@ void Dispatcher::timerCallback()
     if constexpr (features::kLevelLogger) {
         if (++loggerTicks >= 4 && state.measure.micSource >= 0) {
             loggerTicks = 0;
-            const auto r = engine.analyzer().spl().reading();
+            const auto r = engine.spl().reading();
             const auto c = splCal();
             auto at = [&](double v) { return v > -150 ? v + c.offset : -200.0; };
             juce::String err;
@@ -405,15 +448,12 @@ void Dispatcher::timerCallback()
     if (alignJob.active) tickAlign();
     if (calib.active) {
         ++calib.ticks;
-        const auto r = engine.analyzer().result();
-        if (r.delayValid) {
-            // Remove the output's own processing delay (delay + FIR): what remains is the interface.
-            const auto& o = state.outputs[size_t(calib.output)];
-            const double d = r.delaySamples - o.delayMs * 0.001 * r.sampleRate - (o.fir.on ? o.fir.latencySamples : 0);
-            calib.stable = std::abs(d - calib.last) < 0.05 ? calib.stable + 1 : 0;
-            calib.last = d;
-            if (calib.stable >= 3) finishCalibration(true, d, "Interface latency measured");
-        }
+        // The output's processing is bypassed during calibration (see applyTransient), so the
+        // loop delay is the interface alone. A cable is exact: three estimates must agree to
+        // 1/20 of a sample.
+        double d = 0;
+        if (calib.ticks > 1 && calib.vote.add(engine.analyzer().result()) && calib.vote.agreed(0.05, d))
+            finishCalibration(true, d, "Interface latency measured");
         if (calib.active && calib.ticks > 60)
             finishCalibration(false, 0, "No loopback signal found: check the cable from the output to the input");
     }
@@ -446,8 +486,14 @@ juce::var Dispatcher::statusVar()
     set(v, "ioLatency", lat.samples);
     set(v, "ioLatencyCalibrated", lat.calibrated);
     set(v, "calibrating", calib.active);
+    // Internal loopback compares the generator with the mic through the interface: that only
+    // holds still if input and output run on one clock.
+    set(v, "warning", st.inputDevice.isNotEmpty() && st.outputDevice.isNotEmpty() && state.measure.ref == "generator"
+                          && !sharedClockNow(st.inputDevice, st.outputDevice)
+                          ? juce::String("Input and output are separate devices: their clocks drift, so internal-loopback delay and phase are unreliable. Use one interface, or a cabled loopback reference.")
+                          : juce::String());
     {
-        const auto r = engine.analyzer().spl().reading();
+        const auto r = engine.spl().reading();
         const auto [offset, cal] = splOffset();
         const double off = offset;
         auto spl = object();
@@ -471,6 +517,7 @@ juce::var Dispatcher::statusVar()
         set(spl, "method", splCal().method);
         set(spl, "offset", off);
         set(spl, "micDbfs", r.slow[0]);
+        set(spl, "gapSeconds", engine.micMeters().gapSeconds()); // audio missing from the Leq
         set(v, "spl", spl);
         auto lv = object();
         set(lv, "ref", engine.analyzer().refLevelDb());
@@ -515,7 +562,8 @@ juce::String Dispatcher::preflight()
     const auto st = engine.status();
     if (st.faultMuted || st.muteAll) return "outputs are muted: unmute first";
     const int mic = state.measure.micSource;
-    if (mic < 0 || state.sources[size_t(mic)].channel < 0) return "choose a measurement mic (a patched source) first";
+    if (mic < 0 || mic >= int(state.sources.size()) || state.sources[size_t(mic)].channel < 0)
+        return "choose a measurement mic (a patched source) first";
     if (calib.active || sweepJob.active || alignJob.active || matrixJob.active) return "another automatic measurement is running";
     return {};
 }
@@ -529,6 +577,15 @@ void Dispatcher::applyTransient(Params& p) const
         p.gen.targets = 1ull << calib.output;
         p.measure.micInput = calib.input;
         p.measure.ref = RefSource::Generator;
+        // Measure the interface, not the speaker processing: crossovers, all-pass and EQ add
+        // group delay that would otherwise be stored as "interface latency" for good.
+        auto& o = p.out[calib.output];
+        o.gainDb = 0.0f;
+        o.polarityInvert = false;
+        o.delayMs = 0.0f;
+        for (auto& b : o.iir) b = Biquad::identity();
+        o.firOn = false;
+        o.limiterOn = false;
     }
     if (sweepJob.active && !sweepJob.analysing) {
         p.gen.on = true;
@@ -558,11 +615,14 @@ juce::var Dispatcher::startSweep(double seconds, juce::String& err)
     sweepJob = {};
     sweepJob.active = true;
     // The analyzer history must hold sweep + 3 s of tail (10.9 s at 96 kHz).
-    sweepJob.seconds = std::clamp(seconds, 1.0, std::min(8.0, double(Analyzer::kHistory) / sampleRate() - 3.5));
+    const double sr = std::max(1.0, sampleRate());
+    const double maxSec = std::max(1.0, std::min(8.0, double(Analyzer::kHistory) / sr - 3.5));
+    sweepJob.seconds = std::clamp(seconds, 1.0, maxSec);
     sweepJob.length = int64_t(sweepJob.seconds * sampleRate());
     sweepJob.id = ++sweepCounter;
     sweepJob.startedMs = juce::Time::getMillisecondCounterHiRes();
     sweepJob.generation = engine.analyzer().sweepGeneration();
+    takeLimiting(state.gen.targets); // start the limiter watch from now
     commit();
     return "started";
 }
@@ -570,11 +630,14 @@ juce::var Dispatcher::startSweep(double seconds, juce::String& err)
 void Dispatcher::tickSweep()
 {
     const double elapsed = (juce::Time::getMillisecondCounterHiRes() - sweepJob.startedMs) / 1000.0;
+    if (!sweepJob.analysing) {
+        if (const auto [gr, out] = takeLimiting(state.gen.targets); gr < sweepJob.worstGr) { sweepJob.worstGr = gr; sweepJob.worstOut = out; }
+    }
     if (!sweepJob.analysing && elapsed > sweepJob.seconds + 3.0) {
         // Sweep + 3 s of tail (room decay up to ~2.5 s, latency) is in the analyzer history now.
         sweepJob.analysing = true;
         commit(); // generator back to normal
-        engine.analyzer().requestSweep(int64_t((elapsed + 0.25) * sampleRate()));
+        engine.analyzer().requestSweep(int64_t((elapsed + 0.25) * sampleRate()), sweepJob.length);
         return;
     }
     if (sweepJob.analysing && engine.analyzer().sweepGeneration() != sweepJob.generation) {
@@ -599,7 +662,12 @@ void Dispatcher::tickSweep()
             set(d, "curve", toArr(b.curveDb));
             decay.add(d);
         }
-        emit("sweep", { { "ok", true }, { "trace", t }, { "decay", decay } });
+        // A limiter working during the sweep makes it non-linear: the result is not the speaker.
+        const juce::String warning = sweepJob.worstGr < -0.5f
+            ? "the limiter of output " + juce::String(sweepJob.worstOut + 1) + " reduced up to " + juce::String(-sweepJob.worstGr, 1)
+                  + " dB during the sweep: lower the generator level and sweep again"
+            : juce::String();
+        emit("sweep", { { "ok", true }, { "trace", t }, { "decay", decay }, { "warning", warning } });
         commit();
     } else if (elapsed > sweepJob.seconds + 12) {
         sweepJob.active = false;
@@ -617,6 +685,15 @@ juce::var Dispatcher::startAutoAlign(const juce::var& outs, int reference, juce:
         for (auto& v : *a)
             if (int(v) >= 0 && int(v) < int(state.outputs.size())) list.push_back(int(v));
     if (list.size() < 2) { err = "choose at least two outputs to align"; return {}; }
+    // Arrival = impulse peak. A sub's peak comes well after its first arrival (it is a band-
+    // limited, slow impulse), so peak-to-peak timing of subs against full-range boxes is wrong.
+    auto isSub = [&](int o) { const auto& x = state.outputs[size_t(o)]; return x.lp.type != "off" && x.lp.freq <= 250.0f; };
+    const auto subs = std::count_if(list.begin(), list.end(), isSub);
+    if (subs > 0 && subs < std::ptrdiff_t(list.size())) {
+        err = "subs and full-range outputs can't be aligned by arrival time (a sub's impulse peak comes late). "
+              "Align the tops together and the subs together here, then use Align › Sub ↔ top at the crossover.";
+        return {};
+    }
     alignJob = {};
     alignJob.active = true;
     alignJob.outputs = list;
@@ -634,25 +711,34 @@ void Dispatcher::tickAlign()
 {
     ++alignJob.ticks;
     const auto r = engine.analyzer().result();
-    if (r.delayValid && alignJob.ticks > 4) { // let the reset settle (~1 s)
-        alignJob.stable = std::abs(r.delaySamples - alignJob.last) < 0.05 ? alignJob.stable + 1 : 0;
-        alignJob.last = r.delaySamples;
-    }
     const int out = alignJob.outputs[alignJob.index];
-    if (alignJob.stable >= 3) {
+    // Three successive arrival estimates within 0.05 ms (a reflection winning once is outvoted),
+    // and the mic must really hear this speaker over the room: coherence over its band.
+    if (alignJob.ticks > 1) alignJob.vote.add(r); // (tick 1 may still show the result before the reset)
+    double arrival = 0;
+    const bool agreed = alignJob.vote.agreed(0.00005 * r.sampleRate, arrival);
+    const auto [lo, hi] = bandOf({ out });
+    const double quality = captureQuality(r, lo, hi);
+    if (agreed && quality < 0.5) {
+        finishAlign("output " + juce::String(out + 1) + ": the mic hears too much besides this speaker (coherence "
+                    + juce::String(juce::roundToInt(quality * 100)) + " %): check the speaker is on and the room is quiet");
+        return;
+    }
+    if (agreed) {
         const auto lat = currentLatency();
         const double io = state.measure.ref == "generator" ? lat.samples : 0.0;
-        const double arrivalMs = (r.delaySamples - io) * 1000.0 / r.sampleRate;
+        const double arrivalMs = (arrival - io) * 1000.0 / r.sampleRate;
         alignJob.arrivals.push_back({ out, arrivalMs, state.outputs[size_t(out)].delayMs });
         emit("align", { { "stage", "measured" }, { "output", out }, { "arrivalMs", arrivalMs } });
         if (++alignJob.index >= alignJob.outputs.size()) { finishAlign({}); return; }
-        alignJob.ticks = alignJob.stable = 0;
-        alignJob.last = -1;
+        alignJob.ticks = 0;
+        alignJob.vote.clear();
         engine.analyzer().reset();
         commit();
         emit("align", { { "stage", "measuring" }, { "output", alignJob.outputs[alignJob.index] } });
-    } else if (alignJob.ticks > 40) {
-        finishAlign("no clear arrival on output " + juce::String(out + 1) + ": check the mic and the speaker");
+    } else if (alignJob.ticks > 60) {
+        finishAlign("no steady arrival on output " + juce::String(out + 1)
+                    + ": check the mic and the speaker (a reflection as strong as the direct sound also does this: move the mic)");
     }
 }
 
@@ -922,12 +1008,12 @@ juce::var Dispatcher::traceVar(const Analyzer::Result& r, const juce::String& na
     return t;
 }
 
-// Frequency range a group actually covers, from its outputs' crossovers: a sub is judged on
-// its own band, not on 10 kHz where it (correctly) has no coherence.
-std::pair<double, double> Dispatcher::groupBand(const MeasureGroup& g) const
+// Frequency range outputs actually cover, from their crossovers: a sub is judged on its own
+// band, not on 10 kHz where it (correctly) has no coherence.
+std::pair<double, double> Dispatcher::bandOf(const std::vector<int>& outputs) const
 {
     double lo = 1e9, hi = 0;
-    for (int o : g.outputs) {
+    for (int o : outputs) {
         if (o < 0 || o >= int(state.outputs.size())) continue;
         const auto& out = state.outputs[size_t(o)];
         lo = std::min(lo, out.hp.type != "off" ? double(out.hp.freq) : 40.0);
@@ -935,6 +1021,19 @@ std::pair<double, double> Dispatcher::groupBand(const MeasureGroup& g) const
     }
     if (hi <= 0) return { 100.0, 10000.0 };
     return { std::max(25.0, lo * 1.2), std::max(lo * 1.5, hi * 0.8) };
+}
+
+std::pair<float, int> Dispatcher::takeLimiting(const std::vector<int>& outputs)
+{
+    float worst = 0.0f;
+    int which = -1;
+    for (int o : outputs) {
+        if (o < 0 || o >= int(state.outputs.size())) continue;
+        const auto it = slotOf.find(state.outputs[size_t(o)].id);
+        if (it == slotOf.end()) continue;
+        if (const float gr = engine.takeJobLimiting(it->second); gr < worst) { worst = gr; which = o; }
+    }
+    return { worst, which };
 }
 
 juce::var Dispatcher::startMatrix(const juce::var& args, juce::String& err)
@@ -990,10 +1089,12 @@ juce::var Dispatcher::startMatrix(const juce::var& args, juce::String& err)
 
 void Dispatcher::resetCaptures()
 {
+    if (matrixJob.index < matrixJob.groups.size())
+        takeLimiting(state.measure.groups[size_t(matrixJob.groups[matrixJob.index])].outputs); // watch from now
+    matrixJob.worstGr = 0;
+    matrixJob.worstOut = -1;
     for (auto& c : matrixJob.captures) {
-        c.ticks = c.stable = 0;
-        c.settledTicks = -1;
-        c.last = -1;
+        c.ticks = 0;
         c.done = false;
         c.attempt = 0;
         if (auto* an = engine.analyzerForSlot(c.slot)) an->reset();
@@ -1005,7 +1106,8 @@ void Dispatcher::tickMatrix()
     auto& j = matrixJob;
     const int group = j.groups[j.index];
     const auto& g = state.measure.groups[size_t(group)];
-    const auto [lo, hi] = groupBand(g);
+    const auto [lo, hi] = bandOf(g.outputs);
+    if (const auto [gr, o] = takeLimiting(g.outputs); gr < j.worstGr) { j.worstGr = gr; j.worstOut = o; }
     bool allDone = true;
     for (auto& c : j.captures) {
         if (c.done) continue;
@@ -1014,21 +1116,25 @@ void Dispatcher::tickMatrix()
         if (an == nullptr) { c.done = true; continue; }
         ++c.ticks;
         const auto r = an->result();
-        if (r.delayValid && c.ticks > 4) {
-            c.stable = std::abs(r.delaySamples - c.last) < 0.5 ? c.stable + 1 : 0;
-            c.last = r.delaySamples;
-            if (c.stable >= 3 && c.settledTicks < 0) c.settledTicks = c.ticks; // arrival stable: start averaging
-        }
-        const bool averaged = c.settledTicks >= 0 && c.ticks - c.settledTicks >= 12; // + 3 s of averaging
-        const bool timedOut = c.ticks > 72;                                           // 18 s per attempt
+        // Averaging restarts whenever the arrival moves, so "enough averages in the longest
+        // window" means the arrival has also been steady all that time (≈ 3 s at 48 kHz).
+        const bool averaged = c.ticks > 1 && r.delayValid && r.effectiveFrames >= Analyzer::kMinCaptureFrames;
+        const bool timedOut = c.ticks > 72; // 18 s per attempt
         if (!averaged && !timedOut) continue;
         const double q = captureQuality(r, lo, hi);
+        // The limiter makes the system non-linear: that capture is not the speaker. Retrying
+        // at the same level won't help, so say what to do instead.
+        if (j.worstGr < -0.5f) {
+            c.done = true;
+            emit("matrix", { { "stage", "rejected" }, { "group", group }, { "position", c.position }, { "quality", q },
+                             { "message", "the limiter of output " + juce::String(j.worstOut + 1) + " reduced up to "
+                                              + juce::String(-j.worstGr, 1) + " dB: lower the generator level" } });
+            continue;
+        }
         const bool ok = averaged && captureAccepted(r, lo, hi);
         if (!ok && c.attempt == 0) { // disturbed or no arrival: this mic tries once more
             c.attempt = 1;
-            c.ticks = c.stable = 0;
-            c.settledTicks = -1;
-            c.last = -1;
+            c.ticks = 0;
             an->reset();
             emit("matrix", { { "stage", "retry" }, { "group", group }, { "position", c.position }, { "quality", q } });
             continue;

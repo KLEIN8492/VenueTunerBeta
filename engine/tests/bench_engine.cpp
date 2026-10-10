@@ -21,7 +21,7 @@ static void runBench(bool filters)
         if (filters) {
             c.hp = { "lr24", 80 };
             c.lp = { "lr48", 16000 };
-            c.ap = { { true, 2, 120, 0.7f }, { true, 2, 2000, 0.7f }, { true, 1, 500, 0.7f }, { true, 2, 8000, 0.7f } };
+            c.ap = { { true, 2, "2nd", 120, 0.7f }, { true, 2, "2nd", 2000, 0.7f }, { true, 1, "1st", 500, 0.7f }, { true, 2, "lr48", 8000, 0.7f } };
         }
         s.outputs.push_back(c);
     }

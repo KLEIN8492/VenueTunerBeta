@@ -36,7 +36,9 @@ void designOutputIir(const OutputConfig& o, double sr, Biquad* slots)
     for (size_t i = 0; i < lp.size() && i < 4; ++i) slots[kIirLp + int(i)] = lp[i];
     for (size_t i = 0; i < o.ap.size() && i < size_t(kMaxAp); ++i) {
         const auto& a = o.ap[i];
-        if (a.on) slots[kIirAp + int(i)] = a.order == 1 ? design::allpass1(a.freq, sr) : design::allpass2(a.freq, a.q, sr);
+        if (!a.on) continue;
+        const auto secs = design::allpassMatched(a.type.toStdString(), a.freq, sr, a.q);
+        for (size_t k = 0; k < secs.size() && k < 2; ++k) slots[kIirAp + 2 * int(i) + int(k)] = secs[k];
     }
     if (o.airGainDb != 0.0f) slots[kIirAir] = design::highShelf(o.airFreq, 0.707, o.airGainDb, sr);
 }

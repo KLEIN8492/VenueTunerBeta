@@ -57,18 +57,23 @@ public:
         for (int k = 0; k < kMaxIir; ++k)
             if (active[k]) list[count++] = k;
         for (int i = 0; i < n; ++i) {
-            double y = delay.process(buf[i] * gain.getNextValue());
+            const float x = std::isfinite(buf[i]) ? buf[i] : 0.0f;
+            double y = delay.process(x * gain.getNextValue());
             if (rampLeft > 0) stepRamp(list, count);
             for (int j = 0; j < count; ++j) {
                 const int k = list[j];
                 y = state[k].process(cur[k], y);
+            }
+            if (!std::isfinite(y)) {
+                y = 0;
+                for (int k = 0; k < kMaxIir; ++k) state[k].reset();
             }
             buf[i] = float(y);
         }
         // Pass 2: FIR. While an IR is loaded the convolution always runs, so switching it on
         // or off is a 30 ms dry/wet crossfade rather than a jump into a cold convolution.
         firMix.setTargetValue(p.firOn ? 1.0f : 0.0f);
-        if ((p.firLoaded || p.firOn) && conv != nullptr) { // "on" implies "loaded"
+        if ((p.firLoaded || p.firOn) && conv != nullptr && n <= int(wetBuf.size())) { // "on" implies "loaded"
             float* wet = wetBuf.data();
             std::copy(buf, buf + n, wet);
             float* chans[1] = { wet };
@@ -83,7 +88,8 @@ public:
         // Pass 3: limiter → mute
         float pk = 0.0f;
         for (int i = 0; i < n; ++i) {
-            const float y = limiter.process(buf[i]) * muteGain.getNextValue();
+            float y = limiter.process(buf[i]) * muteGain.getNextValue();
+            if (!std::isfinite(y)) y = 0.0f;
             buf[i] = y;
             pk = std::max(pk, std::abs(y));
         }
@@ -92,11 +98,15 @@ public:
         const float gr = limiter.gainReductionDb();
         if (gr < grHold.load(std::memory_order_relaxed))
             grHold.store(gr, std::memory_order_relaxed);
+        if (gr < grJob.load(std::memory_order_relaxed))
+            grJob.store(gr, std::memory_order_relaxed);
     }
 
     // Control-thread readers: return max since the last call and reset.
     float takePeak() { return peakHold.exchange(0.0f, std::memory_order_relaxed); }
     float takeGainReductionDb() { return grHold.exchange(0.0f, std::memory_order_relaxed); }
+    // Same, for automatic measurements (separate hold so the UI meters don't steal it).
+    float takeJobGainReductionDb() { return grJob.exchange(0.0f, std::memory_order_relaxed); }
 
 private:
     static constexpr int kRamp = 256;
@@ -158,7 +168,7 @@ private:
     DelayLine delay;
     Limiter limiter;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gain, muteGain;
-    std::atomic<float> peakHold { 0.0f }, grHold { 0.0f };
+    std::atomic<float> peakHold { 0.0f }, grHold { 0.0f }, grJob { 0.0f };
 };
 
 } // namespace vt

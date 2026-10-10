@@ -7,6 +7,7 @@
 #include "measure/LevelLogger.h"
 #include "core/Features.h"
 #include "measure/Align.h"
+#include "measure/Quality.h"
 #include <array>
 #include <map>
 #include <functional>
@@ -38,6 +39,8 @@ public:
     Latency currentLatency();
 
     juce::var statusVar();
+    // Whether the current input/output share a sample clock (cached per device pair).
+    bool sharedClockNow(const juce::String& in, const juce::String& out);
     // Next tuning change starts a new undo step (tests; the UI uses time-based merging).
     void forceNewUndoStep() { lastUndoKey = {}; }
     // Offset (dB) to turn the main mic's dBFS into dB SPL, and how it was obtained:
@@ -47,6 +50,7 @@ public:
     std::pair<double, bool> splOffset() const { const auto c = splCal(); return { c.offset, c.calibrated() }; }
     // Typical measurement mic (10 mV/Pa), interface at +18 dBu for 0 dBFS, 40 dB of preamp gain.
     static constexpr double kDefaultSplOffset = 109.8;
+    const MicCal& micCalibration() const { return micCal; } // measurement mic's response file
     SystemState& stateForTest() { return state; }
     const SystemState& getState() const { return state; }
 
@@ -82,7 +86,9 @@ private:
     void tickMatrix();
     void finishMatrix(const juce::String& error);
     juce::var traceVar(const Analyzer::Result&, const juce::String& name) const;
-    std::pair<double, double> groupBand(const MeasureGroup&) const;
+    std::pair<double, double> bandOf(const std::vector<int>& outputs) const; // band the outputs cover
+    // Limiter activity on these outputs since the last call: worst gain reduction (dB, ≤ 0).
+    std::pair<float, int> takeLimiting(const std::vector<int>& outputs);
     void emit(const juce::String& event, std::initializer_list<std::pair<const char*, juce::var>> fields);
     juce::String preflight(); // why automatic measurement can't run now, or empty
     void applyTransient(Params&) const; // sweep / auto-align generator overrides
@@ -97,14 +103,15 @@ private:
     SystemState state;
     MicCal micCal;
     bool autosavePending = false;
+    juce::String clockPair;
+    bool clockShared = true;
 
     struct Calibration
     {
         bool active = false;
         int output = 0, input = 0; // logical output, physical input
         int ticks = 0;
-        double last = -1;
-        int stable = 0;
+        ArrivalVote vote;
     } calib;
     std::array<juce::String, kMaxCh> loadedFir; // path currently in each slot's convolution
     std::map<int, int> slotOf;                 // output id -> engine slot
@@ -121,6 +128,8 @@ private:
         int64_t length = 0;
         double startedMs = 0, seconds = 0;
         int generation = 0;
+        float worstGr = 0; // limiter during the sweep
+        int worstOut = -1;
     } sweepJob;
     uint32_t sweepCounter = 0;
 
@@ -130,8 +139,8 @@ private:
         std::vector<int> outputs;
         size_t index = 0;
         int reference = -1;
-        int ticks = 0, stable = 0;
-        double last = -1;
+        int ticks = 0;
+        ArrivalVote vote;
         std::vector<Arrival> arrivals;
         juce::String beforeName;
     } alignJob;
@@ -141,8 +150,7 @@ private:
     struct Capture
     {
         int position = 0, slot = 0;
-        int ticks = 0, stable = 0, settledTicks = -1, attempt = 0;
-        double last = -1;
+        int ticks = 0, attempt = 0;
         bool done = false;
     };
     struct Matrix
@@ -151,6 +159,8 @@ private:
         std::vector<int> groups;
         size_t index = 0;
         std::vector<Capture> captures;
+        float worstGr = 0; // limiter on the current group's outputs during this attempt
+        int worstOut = -1;
     } matrixJob;
     void resetCaptures();
 };
