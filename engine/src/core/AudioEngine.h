@@ -2,7 +2,7 @@
 #include "core/Params.h"
 #include "core/SystemState.h"
 #include "dsp/OutputChain.h"
-#include "dsp/PinkNoise.h"
+#include "dsp/PinkPeriodic.h"
 #include "dsp/SweepGen.h"
 #include "measure/Analyzer.h"
 #include "measure/MicMeters.h"
@@ -106,7 +106,7 @@ private:
     std::array<OutputChain, kMaxCh> chains;
     juce::dsp::ConvolutionMessageQueue convQueue;
     std::array<std::unique_ptr<juce::dsp::Convolution>, kMaxCh> convs;
-    PinkNoise pink;
+    PinkPeriodic pink; // pseudorandom, band-limited, ~12 dB crest (like Smaart's generator)
     SweepGen sweep;
     int64_t sweepPos = 0;
     uint32_t lastSweepId = 0;

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "dsp/PinkNoise.h"
+#include "dsp/PinkPeriodic.h"
 #include "dsp/DelayLine.h"
 #include "dsp/Limiter.h"
 #include "dsp/OutputChain.h"
@@ -37,6 +38,46 @@ TEST_CASE("Pink noise has equal energy per octave (-3 dB/oct PSD) and unit RMS")
     const double ref = bandDb(1000);
     for (double fc : {63.0, 125.0, 250.0, 500.0, 2000.0, 4000.0, 8000.0})
         CHECK_THAT(bandDb(fc) - ref, WithinAbs(0.0, 1.0));
+}
+
+TEST_CASE("Pseudorandom pink: band-limited, flat per octave, ~12 dB crest, no DC, periodic")
+{
+    vt::PinkPeriodic pp;
+    pp.prepare(kSr);
+    const auto& t = pp.table();
+    const int P = int(t.size());
+    REQUIRE(P == (1 << vt::PinkPeriodic::kOrder));
+
+    double sum = 0, sumSq = 0, peak = 0;
+    for (float v : t) { sum += v; sumSq += double(v) * v; peak = std::max(peak, double(std::abs(v))); }
+    const double rms = std::sqrt(sumSq / P);
+    CHECK_THAT(20 * std::log10(rms), WithinAbs(0.0, 0.05));          // unit RMS: level = dBFS RMS
+    CHECK(std::abs(sum / P) < 1e-6);                                  // no DC
+    const double crest = 20 * std::log10(peak / rms);
+    CHECK(crest >= 11.0);
+    CHECK(crest <= 12.5);                                             // Smaart / SMPTE: 11.5–12 dB
+
+    // Exact spectrum of one period (the table is circular): band energy per octave.
+    juce::dsp::FFT fft(vt::PinkPeriodic::kOrder);
+    std::vector<float> buf(2 * size_t(P), 0.0f);
+    std::copy(t.begin(), t.end(), buf.begin());
+    fft.performFrequencyOnlyForwardTransform(buf.data(), true);
+    auto bandDb = [&](double lo, double hi) {
+        double e = 0;
+        for (int k = std::max(1, int(std::ceil(lo * P / kSr))); k <= int(hi * P / kSr); ++k) e += double(buf[k]) * buf[k];
+        return 10 * std::log10(e + 1e-30);
+    };
+    const double ref = bandDb(707, 1414);
+    for (double fc : {31.5, 63.0, 125.0, 250.0, 500.0, 2000.0, 4000.0, 8000.0, 16000.0})
+        CHECK_THAT(bandDb(fc / std::sqrt(2.0), fc * std::sqrt(2.0)) - ref, WithinAbs(0.0, 0.5));
+    CHECK(bandDb(1, 8) - ref < -40);       // nothing below 10 Hz (subs, limiters)
+    CHECK(bandDb(23000, 24000) - ref < -40); // nothing above 22.4 kHz
+
+    // Streams the table circularly.
+    std::vector<float> a(1000);
+    for (int i = 0; i < P; ++i) pp.next();
+    for (auto& v : a) v = pp.next();
+    for (int i = 0; i < 1000; ++i) CHECK(a[size_t(i)] == t[size_t(i)]);
 }
 
 TEST_CASE("DelayLine is sample-exact once settled")

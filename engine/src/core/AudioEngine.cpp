@@ -172,6 +172,7 @@ void AudioEngine::prepare(double sr, int block)
     const int maxBlock = std::max(block, 4096);
     for (auto& c : chains) c.prepare(sr, maxBlock);
     genBuf.assign(size_t(maxBlock), 0.0f);
+    pink.prepare(sr); // builds (or reuses) the noise period for this rate: never on the audio thread
     mixBuf.assign(size_t(maxBlock), 0.0f);
     zeroBuf.assign(size_t(maxBlock), 0.0f);
     genGain.reset(sr, 0.5); // 500 ms fade in/out
@@ -254,7 +255,7 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
         for (int i = 0; i < n; ++i) genBuf[size_t(i)] = sweep.sample(sweepPos++) * level * 1.41421356f;
         genGain.setCurrentAndTargetValue(kGenFloor); // pink noise fades in again afterwards
     } else {
-        // Pink noise (unit RMS) with a smooth fade in/out.
+        // Pseudorandom pink noise (unit RMS, ~12 dB crest) with a smooth fade in/out.
         genGain.setTargetValue(p.gen.on ? level : kGenFloor);
         for (int i = 0; i < n; ++i) {
             const float g = genGain.getNextValue();
