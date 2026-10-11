@@ -1,0 +1,23 @@
+VenueTuner for Windows - installation
+=====================================
+
+1. Run VenueTuner-Setup.exe (or unzip the .zip version anywhere and run
+   VenueTuner.exe - nothing is installed then).
+
+2. "Windows protected your PC" (SmartScreen):
+   VenueTuner is free and not signed with a paid certificate, so Windows
+   doesn't know the publisher. Click "More info" -> "Run anyway". Once.
+
+3. Audio interface:
+   - ASIO (recommended for pro interfaces: lowest latency). Install your
+     interface's own ASIO driver and choose it in Settings > Audio.
+     Only builds made with the ASIO SDK list ASIO devices (see manual).
+   - Windows Audio (WASAPI) works with every interface; shared mode adds
+     latency, so set the interface to the session's sample rate
+     (48 kHz) in the Windows sound control panel.
+
+4. Allow microphone access if Windows asks
+   (Settings > Privacy & security > Microphone > Let desktop apps access).
+
+Requirements: Windows 10 or 11, 64-bit.
+Settings, snapshots, presets: %APPDATA%\VenueTuner

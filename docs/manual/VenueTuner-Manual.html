@@ -123,8 +123,8 @@
 <h2 id="need"><span class="n">2</span>What you need</h2>
 <table>
   <tr><th>Item</th><th>Recommendation</th></tr>
-  <tr><td>Mac</td><td>macOS 13 Ventura or later, Apple Silicon or Intel. A dedicated machine is best for shows.</td></tr>
-  <tr><td>Audio interface</td><td>A wired USB or Thunderbolt interface (Core Audio, class compliant). Enough inputs for the console feed(s) and measurement mic(s), enough outputs for your speaker feeds. Network audio (Dante, AVB) is not supported in this version.</td></tr>
+  <tr><td>Computer</td><td><b>Mac</b>: macOS 13 Ventura or later, Apple Silicon or Intel. <b>Windows</b>: 10 or 11, 64-bit. <b>Linux</b>: 64-bit x86, Ubuntu 22.04 / Debian 12 or newer. A dedicated machine is best for shows.</td></tr>
+  <tr><td>Audio interface</td><td>A wired USB or Thunderbolt interface (Core Audio on Mac; on Windows the interface's ASIO driver or Windows Audio/WASAPI; on Linux ALSA or JACK/PipeWire). Enough inputs for the console feed(s) and measurement mic(s), enough outputs for your speaker feeds. Network audio (Dante, AVB) is not supported in this version.</td></tr>
   <tr><td>Measurement mic</td><td>An omnidirectional measurement microphone with 48 V phantom power, ideally with its calibration file. Optional: an acoustic calibrator (94 dB) for accurate SPL.</td></tr>
   <tr><td>Cables</td><td>Console outputs → interface inputs; interface outputs → amplifiers or powered speakers. Optional: a short cable from one output to one input to calibrate the interface latency.</td></tr>
 </table>
@@ -142,6 +142,18 @@ They work for trying the software, but Apple's processing adds about 45 ms of la
     </ul></li>
   <li>When macOS asks for <b>microphone access</b>, allow it. Without it the measurement inputs stay silent.</li>
 </ol>
+<h3>Windows</h3>
+<ol class="steps">
+  <li>Run <code>VenueTuner-Setup-0.1.0.exe</code>, or unzip <code>VenueTuner-0.1.0-win.zip</code> anywhere and run <b>VenueTuner.exe</b> (nothing is installed then).</li>
+  <li>"Windows protected your PC": the app isn't signed with a paid certificate. Click <b>More info → Run anyway</b>, once.</li>
+  <li>Audio: choose <b>Windows Audio</b> (WASAPI) in Settings › Audio and set the interface to 48 kHz in the Windows sound settings. This test build has no ASIO; builds made on a Windows PC with the ASIO SDK list your interface's ASIO driver, which gives the lowest latency.</li>
+</ol>
+<h3>Linux</h3>
+<ol class="steps">
+  <li><code>chmod +x VenueTuner-0.1.0.AppImage</code> then run it (Ubuntu 22.04+ may need <code>sudo apt install libfuse2</code>). Or unpack the <code>.tar.gz</code> and run <code>venuetuner</code>.</li>
+  <li>Audio: ALSA works directly (close other apps using the interface); JACK or PipeWire-JACK is used when running. For dropout-free low latency: <code>sudo usermod -aG audio $USER</code>, then log out and in.</li>
+</ol>
+<p>On Windows and Linux, read <kbd>Ctrl</kbd> wherever this manual says <kbd>⌘</kbd>. Settings live in <code>%APPDATA%\VenueTuner</code> (Windows) or <code>~/.config/VenueTuner</code> (Linux).</p>
 <p>Two windows open: <b>Measurement</b> (top) and <b>Live</b> (bottom). <b>Settings</b> opens with <kbd>⌘</kbd><kbd>,</kbd>. The windows remember their position.</p>
 
 <h2 id="quick"><span class="n">4</span>Quick start: tune a system in 15 steps</h2>

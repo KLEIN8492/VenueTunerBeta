@@ -58,8 +58,8 @@
         <input type="number" id="airT" step="0.5" style="width:56px"/>°C <input type="number" id="airH" step="1" style="width:50px"/>% RH
         <button id="airRef" title="store the current conditions as those of the tuning">Tuned now</button>
         <span id="airRefTxt" class="dim"></span></span>
-      <button id="undoBtn" title="Undo (⌘Z)">↶</button><button id="redoBtn" title="Redo (⇧⌘Z)">↷</button>
-      <span class="dim">Click a strip name to edit its filters · ⌘-click: multi-select · hold ⇧ while changing a value to apply it to all selected</span>
+      <button id="undoBtn" data-keys title="Undo (⌘Z)">↶</button><button id="redoBtn" data-keys title="Redo (⇧⌘Z)">↷</button>
+      <span class="dim" data-keys="text">Click a strip name to edit its filters · ⌘-click: multi-select · hold ⇧ while changing a value to apply it to all selected</span>
     </div>
     <div class="top">
       <div class="strips" id="strips"></div>

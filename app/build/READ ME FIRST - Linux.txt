@@ -1,0 +1,22 @@
+VenueTuner for Linux - installation
+===================================
+
+AppImage (any distribution):
+  chmod +x VenueTuner-*.AppImage
+  ./VenueTuner-*.AppImage
+  (Ubuntu 22.04+ may need: sudo apt install libfuse2)
+
+Without AppImage (tar.gz):
+  tar xzf VenueTuner-*.tar.gz && ./VenueTuner-*/venuetuner
+
+
+Audio:
+  - ALSA works out of the box: choose your interface in Settings > Audio.
+    Close other apps using it, or use JACK / PipeWire-JACK.
+  - JACK (or PipeWire's JACK layer) is used when it is running.
+  - For low latency without dropouts, add yourself to the audio group and
+    allow real-time priority:
+      sudo usermod -aG audio $USER     (log out and in again)
+
+Requirements: 64-bit x86 Linux, glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35 or newer).
+Settings, snapshots, presets: ~/.config/VenueTuner

@@ -11,8 +11,15 @@ const PORT = Number(process.env.VT_PORT || 47800);
 // Packaged app: engine and UI live in Contents/Resources. Development: in the repo.
 const ROOT = path.resolve(__dirname, '..');
 const UI_DIST = app.isPackaged ? path.join(process.resourcesPath, 'ui') : path.join(ROOT, 'ui', 'dist');
+const ENGINE_FILE = process.platform === 'win32' ? 'VenueTunerEngine.exe' : 'VenueTunerEngine';
 const ENGINE = process.env.VT_ENGINE
-  || (app.isPackaged ? path.join(process.resourcesPath, 'engine', 'VenueTunerEngine') : path.join(ROOT, 'engine', 'build', 'VenueTunerEngine'));
+  || (app.isPackaged ? path.join(process.resourcesPath, 'engine', ENGINE_FILE) : devEngine());
+
+// Development: the engine from the platform's build folder (MSVC puts it under Release/).
+function devEngine() {
+  const tries = [path.join(ROOT, 'engine', 'build', ENGINE_FILE), path.join(ROOT, 'engine', 'build', 'Release', ENGINE_FILE)];
+  return tries.find((p) => fs.existsSync(p)) || tries[0];
+}
 const DATA_DIR = process.env.VT_DATA_DIR || path.join(app.getPath('appData'), 'VenueTuner');
 
 protocol.registerSchemesAsPrivileged([
@@ -52,7 +59,8 @@ async function ensureEngine() {
   }
   restarts.push(now);
   console.log(`[shell] starting engine ${ENGINE}`);
-  engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // stdin stays open as a lifeline: closing it asks the engine to save and quit (works on Windows too).
+  engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR, '--quit-on-stdin-eof'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   engine.stdout.on('data', (d) => process.stdout.write(`[engine] ${d}`));
   engine.stderr.on('data', (d) => process.stderr.write(`[engine] ${d}`));
   engine.on('error', (e) => {
@@ -71,7 +79,8 @@ function stopEngine() {
     const child = engine;
     const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 2000);
     child.once('exit', () => { clearTimeout(timer); resolve(); });
-    child.kill('SIGTERM'); // engine autosaves on SIGTERM
+    child.stdin.end(); // engine autosaves and exits (all platforms)
+    if (process.platform !== 'win32') child.kill('SIGTERM'); // on Windows kill() would terminate without saving
   });
 }
 

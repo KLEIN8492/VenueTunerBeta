@@ -46,6 +46,22 @@ An Apple Developer ID ($99/year) would only remove that first-launch step.
 
 Settings, snapshots and calibration live in `~/Library/Application Support/VenueTuner` on each Mac.
 
+## Windows and Linux
+
+The same code builds for all three systems (JUCE: CoreAudio / WASAPI+ASIO / ALSA+JACK).
+
+| Platform | Command | Output (app/dist) |
+|---|---|---|
+| Linux x64, from this Mac | `docker build --platform linux/amd64 -t venuetuner-linux engine/platform/linux`, then the `docker run` line in that Dockerfile, then `npm --prefix app run dist:linux` | `VenueTuner-<v>.AppImage`, `venuetuner-<v>.tar.gz` |
+| Windows x64, from this Mac (experimental) | `docker build --platform linux/amd64 -t venuetuner-mingw engine/platform/windows`, the `docker run` line in that Dockerfile, then `npm --prefix app run dist:win` | `VenueTuner-Setup-<v>.exe`, `VenueTuner-<v>-win.zip` |
+| Windows x64, on a Windows PC (recommended) | Visual Studio 2022 Build Tools (C++), CMake, Node 20+: `npm run setup` then `npm run package:win`. Add ASIO with `-DVT_ASIO_SDK_DIR=C:\path\to\asiosdk` in `build:engine:win` | same |
+| Linux, on a Linux box | `apt install g++ cmake ninja-build libasound2-dev libjack-jackd2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libfreetype-dev`, then `npm run setup && npm run package:linux` | same |
+
+The colima/Docker route needs `brew install colima docker` and `colima start --vm-type vz --vz-rosetta`.
+The MinGW cross-build has WASAPI only (no ASIO) and was tested under Wine (all tests pass, engine
+starts and saves), not yet on a real Windows PC with an interface. The desktop shell stops the engine by closing its stdin
+(`--quit-on-stdin-eof`), because Windows has no SIGTERM: the engine still saves its state.
+
 ## Using it
 
 | Key | Action |

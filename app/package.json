@@ -6,7 +6,9 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --mac --universal"
+    "dist": "electron-builder --mac --universal",
+    "dist:win": "electron-builder --win --x64",
+    "dist:linux": "electron-builder --linux --x64"
   },
   "devDependencies": {
     "electron": "33.2.0",
@@ -30,10 +32,6 @@
       {
         "from": "../ui/dist",
         "to": "ui"
-      },
-      {
-        "from": "../engine/build-universal/VenueTunerEngine",
-        "to": "engine/VenueTunerEngine"
       }
     ],
     "mac": {
@@ -61,7 +59,13 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "VenueTuner measures your sound system through the audio interface and the measurement microphone.",
         "NSHighResolutionCapable": true
-      }
+      },
+      "extraResources": [
+        {
+          "from": "../engine/build-universal/VenueTunerEngine",
+          "to": "engine/VenueTunerEngine"
+        }
+      ]
     },
     "dmg": {
       "title": "VenueTuner ${version}",
@@ -97,6 +101,79 @@
         }
       ]
     },
-    "afterPack": "build/adhoc-sign.js"
+    "afterPack": "build/adhoc-sign.js",
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "../engine/build-win/VenueTunerEngine.exe",
+          "to": "engine/VenueTunerEngine.exe"
+        },
+        {
+          "from": "../docs/manual/VenueTuner-Manual.pdf",
+          "to": "VenueTuner-Manual.pdf"
+        },
+        {
+          "from": "build/READ ME FIRST - Windows.txt",
+          "to": "READ ME FIRST - Windows.txt"
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "VenueTuner-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Audio",
+      "synopsis": "Live PA system processor and measurement tool",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "../engine/build-linux/VenueTunerEngine",
+          "to": "engine/VenueTunerEngine"
+        },
+        {
+          "from": "../docs/manual/VenueTuner-Manual.pdf",
+          "to": "VenueTuner-Manual.pdf"
+        },
+        {
+          "from": "build/READ ME FIRST - Linux.txt",
+          "to": "READ ME FIRST - Linux.txt"
+        }
+      ],
+      "maintainer": "VenueTuner",
+      "vendor": "VenueTuner"
+    }
   }
 }

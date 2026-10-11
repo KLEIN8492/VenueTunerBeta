@@ -10,6 +10,10 @@
     "app": "npm run build:ui && npm --prefix app start",
     "build:engine:universal": "cmake -S engine -B engine/build-universal -DCMAKE_BUILD_TYPE=Release \"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64\" && cmake --build engine/build-universal -j 10 --target VenueTunerEngine",
     "package": "npm run build:engine:universal && npm run build:ui && npm run manual && npm --prefix app run dist",
-    "manual": "app/node_modules/.bin/electron scripts/html-to-pdf \"$PWD/docs/manual/VenueTuner-Manual.html\" \"$PWD/docs/manual/VenueTuner-Manual.pdf\""
+    "manual": "app/node_modules/.bin/electron scripts/html-to-pdf \"$PWD/docs/manual/VenueTuner-Manual.html\" \"$PWD/docs/manual/VenueTuner-Manual.pdf\"",
+    "build:engine:win": "cmake -S engine -B engine/build-win -A x64 && cmake --build engine/build-win --config Release -j 8 --target VenueTunerEngine",
+    "build:engine:linux": "cmake -S engine -B engine/build-linux -DCMAKE_BUILD_TYPE=Release && cmake --build engine/build-linux -j 8 --target VenueTunerEngine",
+    "package:win": "npm run build:engine:win && npm run build:ui && npm --prefix app run dist:win",
+    "package:linux": "npm run build:engine:linux && npm run build:ui && npm --prefix app run dist:linux"
   }
 }

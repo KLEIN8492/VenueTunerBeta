@@ -7,6 +7,7 @@ import { EqEditor } from './lib/eqeditor';
 import { Channels } from './lib/channels';
 import { loadPrefs, readingName, fmt, limitState, throttled, openCalibration } from './lib/spl';
 import type { OutputConfig, Status, SystemState } from './lib/types';
+import { addKey, keys } from './lib/platform';
 
 const engine = connectFromLocation();
 installUndo(engine);
@@ -48,7 +49,7 @@ function renderStrips(s: SystemState): void {
   const shape = s.outputs.map((o) => o.colour).join(',');
   const root = $('strips');
   if (shape !== builtFor) {
-    root.innerHTML = s.outputs.map(stripHtml).join('') || '<div class="dim" style="padding:10px">No outputs yet: create them in Settings › Outputs (⌘,)</div>';
+    root.innerHTML = s.outputs.map(stripHtml).join('') || '<div class="dim" style="padding:10px">No outputs yet: create them in Settings › Outputs (' + keys('⌘,') + ')</div>';
     builtFor = shape;
   }
   s.outputs.forEach((o, i) => {
@@ -108,7 +109,7 @@ $('strips').addEventListener('click', (e) => {
   if (!strip || !engine.state) return;
   const i = Number(strip.dataset.i);
   if (el.closest('[data-sel]')) {
-    if (!e.metaKey && !e.shiftKey) selected.clear();
+    if (!addKey(e) && !e.shiftKey) selected.clear();
     if (selected.has(i) && selected.size > 1) selected.delete(i); else selected.add(i);
     editor.setOutput(i);
     renderStrips(engine.state);
@@ -297,7 +298,7 @@ $('redoBtn').onclick = () => void engine.request('history.redo').catch(() => und
 engine.on('status', (st) => {
   ($('undoBtn') as HTMLButtonElement).disabled = !st.canUndo;
   ($('redoBtn') as HTMLButtonElement).disabled = !st.canRedo;
-  $('undoBtn').title = `Undo (⌘Z) · ${st.canUndo} step${st.canUndo === 1 ? '' : 's'}`;
+  $('undoBtn').title = `Undo (${keys('⌘Z')}) · ${st.canUndo} step${st.canUndo === 1 ? '' : 's'}`;
 });
 
 // ---------------------------------------------------------------- air compensation
@@ -316,3 +317,9 @@ $('airOn').onchange = (e) => report(engine.patch('air/enabled', (e.target as HTM
 $('airT').onchange = (e) => report(engine.patch('air/tempC', Number((e.target as HTMLInputElement).value)));
 $('airH').onchange = (e) => report(engine.patch('air/humidity', Number((e.target as HTMLInputElement).value)));
 $('airRef').onclick = () => { if (confirm('Store the current temperature and humidity as the conditions the system was tuned in?')) report(engine.request('air.setReference')); };
+
+// Shortcut hints in the static HTML: ⌘ on macOS, Ctrl elsewhere.
+for (const el of document.querySelectorAll<HTMLElement>('[data-keys]')) {
+  if (el.title) el.title = keys(el.title);
+  if (el.dataset.keys === 'text') el.textContent = keys(el.textContent ?? '');
+}

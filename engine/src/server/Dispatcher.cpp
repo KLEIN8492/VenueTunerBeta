@@ -477,7 +477,7 @@ juce::var Dispatcher::statusVar()
     set(v, "numOut", st.numOut);
     set(v, "cpu", st.cpu);
     set(v, "xruns", st.xruns);
-    set(v, "callbacks", st.callbacks);
+    set(v, "callbacks", juce::int64(st.callbacks)); // int64_t is long on Linux: var only takes long long
     set(v, "running", st.running);
     set(v, "faultMuted", st.faultMuted);
     set(v, "muteAll", st.muteAll);
