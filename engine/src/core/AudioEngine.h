@@ -112,6 +112,10 @@ private:
     uint32_t lastSweepId = 0;
     double currentSr = 48000.0;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> genGain;
+    // Source switches (pink ↔ sweep, a re-triggered sweep) go through silence: genSwitch fades
+    // to 0 in 10 ms, the source changes, then it fades back in. sweepGain ramps level edits.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> genSwitch, sweepGain;
+    bool genSweeping = false;
     std::vector<float> genBuf, mixBuf, zeroBuf;
     std::atomic<bool> muteAll { false }, faultMuted { true };
     std::atomic<int> xruns { 0 };

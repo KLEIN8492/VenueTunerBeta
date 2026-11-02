@@ -177,6 +177,11 @@ void AudioEngine::prepare(double sr, int block)
     zeroBuf.assign(size_t(maxBlock), 0.0f);
     genGain.reset(sr, 0.5); // 500 ms fade in/out
     genGain.setCurrentAndTargetValue(kGenFloor);
+    genSwitch.reset(sr, 0.01);
+    genSwitch.setCurrentAndTargetValue(1.0f);
+    sweepGain.reset(sr, 0.01);
+    sweepGain.setCurrentAndTargetValue(0.0f);
+    genSweeping = false;
     analyzerImpl.requestReset(sr);
     meters.setSampleRate(sr); // the Leq only restarts if the rate really changed
     for (auto& a : extra)
@@ -244,23 +249,39 @@ void AudioEngine::processBlock(const float* const* in, int numIn, float* const* 
     const bool silence = muteAll.load(std::memory_order_relaxed) || faultMuted.load(std::memory_order_relaxed);
 
     const float level = std::pow(10.0f, std::min(p.gen.levelDb, kGeneratorMaxDb) / 20.0f);
-    if (p.gen.on && p.gen.mode == GeneratorParams::Sweep) {
-        // Log sweep, played once per sweepId. Level is RMS, so peak = level · √2.
-        if (p.gen.sweepId != lastSweepId) {
-            lastSweepId = p.gen.sweepId;
-            sweepPos = 0;
-            sweep.sr = currentSr;
-            sweep.length = p.gen.sweepLength;
+    // Log sweep (played once per sweepId; level is RMS, so peak = level · √2) or pseudorandom
+    // pink noise (unit RMS, ~12 dB crest, 500 ms fade in/out). Changing source never cuts: the
+    // old one fades out over 10 ms, the switch happens in silence, the new one fades in.
+    const bool wantSweep = p.gen.on && p.gen.mode == GeneratorParams::Sweep;
+    bool pendingSwitch = wantSweep != genSweeping || (wantSweep && p.gen.sweepId != lastSweepId);
+    if (pendingSwitch) genSwitch.setTargetValue(0.0f);
+    sweepGain.setTargetValue(level * 1.41421356f); // mid-sweep level edits ramp over 10 ms
+    if (!genSweeping) genGain.setTargetValue(p.gen.on ? level : kGenFloor);
+    for (int i = 0; i < n; ++i) {
+        if (pendingSwitch && !genSwitch.isSmoothing()) { // faded out: switch in silence
+            genSweeping = wantSweep;
+            if (wantSweep) {
+                lastSweepId = p.gen.sweepId;
+                sweepPos = 0;
+                sweep.sr = currentSr;
+                sweep.length = p.gen.sweepLength;
+                sweepGain.setCurrentAndTargetValue(level * 1.41421356f);
+                genGain.setCurrentAndTargetValue(kGenFloor); // pink fades in again afterwards
+            } else {
+                genGain.setTargetValue(p.gen.on ? level : kGenFloor);
+            }
+            genSwitch.setTargetValue(1.0f);
+            pendingSwitch = false;
         }
-        for (int i = 0; i < n; ++i) genBuf[size_t(i)] = sweep.sample(sweepPos++) * level * 1.41421356f;
-        genGain.setCurrentAndTargetValue(kGenFloor); // pink noise fades in again afterwards
-    } else {
-        // Pseudorandom pink noise (unit RMS, ~12 dB crest) with a smooth fade in/out.
-        genGain.setTargetValue(p.gen.on ? level : kGenFloor);
-        for (int i = 0; i < n; ++i) {
+        const float fade = genSwitch.getNextValue();
+        float v;
+        if (genSweeping) {
+            v = sweep.sample(sweepPos++) * sweepGain.getNextValue();
+        } else {
             const float g = genGain.getNextValue();
-            genBuf[size_t(i)] = g <= kGenFloor * 1.0001f ? 0.0f : pink.next() * g;
+            v = g <= kGenFloor * 1.0001f ? 0.0f : pink.next() * g;
         }
+        genBuf[size_t(i)] = v * fade;
     }
 
     for (int c = 0; c < numIn && c < kMaxCh; ++c) {
