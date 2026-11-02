@@ -8,7 +8,8 @@
     "start": "electron .",
     "dist": "electron-builder --mac --universal",
     "dist:win": "electron-builder --win --x64",
-    "dist:linux": "electron-builder --linux --x64"
+    "dist:linux": "electron-builder --linux --x64",
+    "test": "node --test"
   },
   "devDependencies": {
     "electron": "33.2.0",
@@ -26,6 +27,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "engineprobe.js",
       "package.json"
     ],
     "extraResources": [

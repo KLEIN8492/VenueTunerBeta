@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const nodeNet = require('node:net');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { probeEngine } = require('./engineprobe');
 
 const PORT = Number(process.env.VT_PORT || 47800);
 // Packaged app: engine and UI live in Contents/Resources. Development: in the repo.
@@ -47,14 +48,32 @@ function portOpen() {
   });
 }
 
+let attached = false, portBusySince = 0;
+
 async function ensureEngine() {
   if (quitting || engine) return;
   if (await portOpen()) {
-    // An engine is already running (e.g. the UI was restarted): attach, keep audio going.
-    console.log(`[shell] attaching to running engine on :${PORT}`);
-    setTimeout(ensureEngine, 2000);
+    // Something listens on the engine port. Attach (keep audio going) only if it is an engine
+    // that accepts this launch's session token; never drive or wait on a foreign process.
+    const verdict = await probeEngine(PORT, TOKEN);
+    if (verdict === 'ours') {
+      if (!attached) console.log(`[shell] attached to running engine on :${PORT}`);
+      attached = true;
+      portBusySince = 0;
+      setTimeout(ensureEngine, 2000); // watch it; start our own if it goes away
+      return;
+    }
+    // An engine from a previous launch may still be saving and exiting: give it a few seconds.
+    if (!portBusySince) portBusySince = Date.now();
+    if (Date.now() - portBusySince < 6000) { setTimeout(ensureEngine, 1000); return; }
+    console.log(`[shell] port ${PORT} is held by ${verdict === 'refused' ? 'another VenueTuner engine' : 'another program'}`);
+    dialog.showErrorBox('VenueTuner engine',
+      `Port ${PORT} is already in use by ${verdict === 'refused' ? 'another VenueTuner engine (another copy of the app?)' : 'another program'}.\n\n`
+      + 'VenueTuner will not connect to it. Quit the other program (or the other copy of VenueTuner), then relaunch.');
     return;
   }
+  attached = false;
+  portBusySince = 0;
   const now = Date.now();
   while (restarts.length && now - restarts[0] > 60_000) restarts.shift();
   if (restarts.length >= 5) {
