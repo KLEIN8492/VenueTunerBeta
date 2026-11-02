@@ -1,6 +1,7 @@
 // VenueTuner desktop shell: supervises the headless engine and hosts the windows.
 //   Measurement ⌘1 · Live/Tuning ⌘2 · Settings ⌘,
-const { app, BrowserWindow, Menu, dialog, net, protocol, screen, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, screen, systemPreferences } = require('electron');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const nodeNet = require('node:net');
@@ -21,6 +22,13 @@ function devEngine() {
   return tries.find((p) => fs.existsSync(p)) || tries[0];
 }
 const DATA_DIR = process.env.VT_DATA_DIR || path.join(app.getPath('appData'), 'VenueTuner');
+
+// Session token: the engine's port controls a PA, so only this shell's windows may drive it.
+// Fresh per launch, never in argv or the environment (other processes can read both): the
+// engine gets it on stdin (--token-stdin), the windows ask for it over IPC (preload.js), and
+// both present it as ?token= in the WebSocket handshake. See engine/src/server/Server.h.
+const TOKEN = crypto.randomBytes(32).toString('hex');
+ipcMain.handle('vt-token', (e) => (e.senderFrame && e.senderFrame.url.startsWith('app://') ? TOKEN : null));
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -60,7 +68,8 @@ async function ensureEngine() {
   restarts.push(now);
   console.log(`[shell] starting engine ${ENGINE}`);
   // stdin stays open as a lifeline: closing it asks the engine to save and quit (works on Windows too).
-  engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR, '--quit-on-stdin-eof'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR, '--token-stdin', '--quit-on-stdin-eof'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  engine.stdin.write(`${TOKEN}\n`); // first stdin line = session token; stdin then stays open as the quit lifeline
   engine.stdout.on('data', (d) => process.stdout.write(`[engine] ${d}`));
   engine.stderr.on('data', (d) => process.stderr.write(`[engine] ${d}`));
   engine.on('error', (e) => {

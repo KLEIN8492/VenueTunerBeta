@@ -3,7 +3,7 @@
 import type { Engine } from './engine';
 
 declare global {
-  interface Window { vt?: { pathForFile(f: File): string; onHistory?(cb: (kind: 'undo' | 'redo') => void): void } }
+  interface Window { vt?: { pathForFile(f: File): string; onHistory?(cb: (kind: 'undo' | 'redo') => void): void; sessionToken?(): Promise<string | null> } }
 }
 
 function editingText(): boolean {

@@ -1,20 +1,59 @@
 #include "server/Server.h"
 #include <exception>
+#include <iostream>
 
 namespace vt {
 
-Server::Server(Dispatcher& d, AudioEngine& e, int port)
-    : dispatcher(d), engine(e), ws(port, "127.0.0.1")
+namespace {
+// Constant-time comparison: the time taken doesn't tell an attacker how many characters matched.
+bool sameToken(const std::string& a, const std::string& b)
+{
+    unsigned char diff = a.size() == b.size() ? 0 : 1;
+    for (size_t i = 0; i < a.size(); ++i) diff |= uint8_t(a[i] ^ (i < b.size() ? b[i] : 0));
+    return diff == 0;
+}
+}
+
+std::string Server::tokenFromUri(const std::string& uri)
+{
+    const auto q = uri.find('?');
+    if (q == std::string::npos) return {};
+    size_t at = q + 1;
+    while (at < uri.size()) {
+        const auto end = std::min(uri.find('&', at), uri.size());
+        if (uri.compare(at, 6, "token=") == 0) return uri.substr(at + 6, end - at - 6);
+        at = end + 1;
+    }
+    return {};
+}
+
+Server::Server(Dispatcher& d, AudioEngine& e, int port, std::string sessionToken)
+    : dispatcher(d), engine(e), ws(port, "127.0.0.1"), token(std::move(sessionToken))
 {
     ws.disablePerMessageDeflate();
+    if (token.empty())
+        std::cerr << "VenueTuner engine: no session token, any local process can control the outputs" << std::endl;
     std::weak_ptr<bool> weak = alive;
-    ws.setOnClientMessageCallback([this, weak](std::shared_ptr<ix::ConnectionState>, ix::WebSocket& client,
+    ws.setOnClientMessageCallback([this, weak](std::shared_ptr<ix::ConnectionState> conn, ix::WebSocket& client,
                                                const ix::WebSocketMessagePtr& msg) {
         if (msg->type == ix::WebSocketMessageType::Open) {
+            if (!token.empty() && !sameToken(tokenFromUri(msg->openInfo.uri), token)) {
+                std::cerr << "VenueTuner engine: rejected connection from " << (conn ? conn->getRemoteIp() : std::string("?"))
+                          << " (missing or wrong session token)" << std::endl;
+                client.close(kUnauthorizedClose, "unauthorized");
+                return;
+            }
+            { std::lock_guard<std::mutex> l(authLock); authed.insert(&client); }
             juce::MessageManager::callAsync([this, weak] { if (weak.lock()) sendState(); });
             return;
         }
+        if (msg->type == ix::WebSocketMessageType::Close) {
+            std::lock_guard<std::mutex> l(authLock);
+            authed.erase(&client);
+            return;
+        }
         if (msg->type != ix::WebSocketMessageType::Message || msg->binary) return;
+        if (!authorised(&client)) return; // commands only from clients that passed the handshake
         const std::string text = msg->str;
         ix::WebSocket* target = &client;
         juce::MessageManager::callAsync([this, weak, text, target] {
@@ -30,7 +69,7 @@ Server::Server(Dispatcher& d, AudioEngine& e, int port)
                 reply = juce::JSON::toString(err, true);
             }
             for (auto& c : ws.getClients()) // the client may have disconnected meanwhile
-                if (c.get() == target) c->sendText(reply.toStdString());
+                if (c.get() == target && authorised(c.get())) c->sendText(reply.toStdString());
         });
     });
     dispatcher.onStateChanged = [this] { sendState(); };
@@ -63,16 +102,22 @@ void Server::sendState()
     broadcastText(juce::JSON::toString(e, true));
 }
 
+bool Server::authorised(ix::WebSocket* c) const
+{
+    std::lock_guard<std::mutex> l(authLock);
+    return authed.count(c) > 0;
+}
+
 void Server::broadcastText(const juce::String& s)
 {
     const auto str = s.toStdString();
-    for (auto& c : ws.getClients()) c->sendText(str);
+    for (auto& c : ws.getClients()) if (authorised(c.get())) c->sendText(str);
 }
 
 void Server::broadcastBinary(const std::vector<float>& v)
 {
     const std::string bytes(reinterpret_cast<const char*>(v.data()), v.size() * sizeof(float));
-    for (auto& c : ws.getClients()) c->sendBinary(bytes);
+    for (auto& c : ws.getClients()) if (authorised(c.get())) c->sendBinary(bytes);
 }
 
 void Server::timerCallback()
