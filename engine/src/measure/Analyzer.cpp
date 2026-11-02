@@ -194,6 +194,10 @@ void Analyzer::findDelay()
     }
     const double pk = std::abs(ir[peak]);
 
+    // Left neighbour of lag 0 is index M-1: the deconvolution is linear (zero-padded to 2L), so
+    // the upper half of the buffer holds the negative lags and M-1 IS lag -1, not a wrapped
+    // unrelated sample. Keep it: dropping the parabola at lag 0 would read a 0.3-sample
+    // loopback as 0.0 (test_analyzer: "Delay finder at lag 0").
     const double a = std::abs(ir[(peak - 1 + M) % M]), b = pk, c = std::abs(ir[peak + 1]);
     const double denom = a - 2 * b + c;
     const double frac = std::abs(denom) > 1e-12 ? 0.5 * (a - c) / denom : 0.0;

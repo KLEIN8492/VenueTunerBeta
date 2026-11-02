@@ -317,3 +317,61 @@ TEST_CASE("Display grid is 1/48 octave and phase smoothing is independent of mag
     REQUIRE(r.freq.size() > 470);
     CHECK_THAT(r.freq[48] / r.freq[0], WithinAbs(2.0, 1e-3));
 }
+
+namespace {
+// Pink noise where the mic hears the reference `delay` samples late, for delays near zero:
+// the reference itself is held back 64 samples and the mic goes through a windowed sinc centred
+// at 64 + delay, so a fractional delay can sit on either side of lag 0.
+vt::Analyzer::Result runNearZero(vt::Analyzer& an, double delay)
+{
+    std::vector<float> h(129);
+    for (int k = 0; k < 129; ++k) {
+        const double x = k - (64.0 + delay);
+        const double s = std::abs(x) < 1e-9 ? 1.0 : std::sin(kPi * x) / (kPi * x);
+        h[size_t(k)] = float(s * (0.5 + 0.5 * std::cos(kPi * x / 65.0)));
+    }
+    vt::PinkNoise pn;
+    std::deque<float> hist(129, 0.0f);
+    constexpr int block = 512;
+    std::vector<float> ref(block), meas(block);
+    for (int b = 0; b < int(6.0 * kSr / block); ++b) {
+        for (int i = 0; i < block; ++i) {
+            hist.push_front(pn.next()); hist.pop_back();
+            ref[size_t(i)] = hist[64];
+            float y = 0; for (int k = 0; k < 129; ++k) y += h[size_t(k)] * hist[size_t(k)];
+            meas[size_t(i)] = y;
+        }
+        an.pushRef(ref.data(), block);
+        an.pushMeas(meas.data(), block);
+        an.process();
+    }
+    return an.result();
+}
+}
+
+TEST_CASE("Delay finder at lag 0: zero delay reads 0, not a wrapped value")
+{
+    // Loopback latency calibration sees exactly this case. The IR is a linear (zero-padded 2L)
+    // deconvolution, so the sample left of lag 0 is lag -1 (index M-1), the true neighbour.
+    vt::Analyzer an;
+    an.prepare(kSr);
+    const auto r = runNearZero(an, 0.0);
+    REQUIRE(r.delayValid);
+    CHECK_THAT(r.autoDelaySamples, WithinAbs(0.0, 0.02));
+    CHECK_THAT(r.delaySamples, WithinAbs(0.0, 0.02));
+}
+
+TEST_CASE("Delay finder at lag 0: interpolates exactly like at any other lag")
+{
+    // Peak at lag 0, true delay 0.3: the parabola needs lag -1 as its left neighbour. Reading
+    // it from index M-1 is correct (it IS lag -1); skipping the parabolic step at lag 0 would
+    // read 0.0 here. So lag 0 must give the same fraction as the same delay 40 samples later.
+    vt::Analyzer near0, near40;
+    near0.prepare(kSr);
+    near40.prepare(kSr);
+    const auto r0 = runNearZero(near0, 0.3), r40 = runNearZero(near40, 40.3);
+    REQUIRE(r0.delayValid);
+    REQUIRE(r40.delayValid);
+    CHECK(r0.autoDelaySamples > 0.02); // a fraction was interpolated, not forced to 0
+    CHECK_THAT(r0.autoDelaySamples, WithinAbs(r40.autoDelaySamples - 40.0, 1e-3));
+}
