@@ -22,6 +22,15 @@ void AudioEngine::loadFir(int output, juce::AudioBuffer<float>&& ir, double irSa
                                                juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::no);
 }
 
+bool AudioEngine::unloadFirIfIdle(int slot)
+{
+    if (slot < 0 || slot >= kMaxCh || !chains[size_t(slot)].takeFirUnloadRequest()) return false;
+    juce::AudioBuffer<float> passThrough(1, 1);
+    passThrough.setSample(0, 0, 1.0f); // wet == dry while a re-enabled FIR is being reloaded
+    loadFir(slot, std::move(passThrough), currentSr);
+    return true;
+}
+
 AudioEngine::~AudioEngine()
 {
     stopTimer();

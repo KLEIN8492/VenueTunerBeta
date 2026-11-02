@@ -29,6 +29,10 @@ public:
         muteGain.setCurrentAndTargetValue(0.0f);
         firMix.reset(sr, 0.03);
         firMix.setCurrentAndTargetValue(0.0f);
+        firState = FirState::active;
+        dryFor = 0;
+        idleAfter = int64_t(kFirIdleSeconds * sr);
+        unloadWanted.store(false);
         wetBuf.assign(size_t(std::max(maxBlock, 1)), 0.0f);
         for (int k = 0; k < kMaxIir; ++k) { cur[k] = target[k] = Biquad::identity(); state[k].reset(); }
         rampLeft = 0;
@@ -73,10 +77,29 @@ public:
             }
             buf[i] = float(y);
         }
-        // Pass 2: FIR. While an IR is loaded the convolution always runs, so switching it on
-        // or off is a 30 ms dry/wet crossfade rather than a jump into a cold convolution.
+        // Pass 2: FIR. While an IR is loaded and in use, the convolution always runs, so switching
+        // it on or off is a 30 ms dry/wet crossfade rather than a jump into a cold convolution.
+        // Off and settled dry for kFirIdleSeconds, it parks: the chain asks the control thread to
+        // swap in a 1-sample pass-through IR (frees the big one on the convolution's background
+        // thread), keeps running until that swap has landed, then stops calling the convolution
+        // at all (64 silent convolutions are real CPU). Back on: reset the stale history and
+        // crossfade in as usual; the pass-through IR makes wet == dry until the real IR is reloaded,
+        // and the convolution crossfades to it by itself.
         firMix.setTargetValue(p.firOn ? 1.0f : 0.0f);
-        if ((p.firLoaded || p.firOn) && conv != nullptr && n <= int(wetBuf.size())) { // "on" implies "loaded"
+        if (p.firOn && firState != FirState::active && conv != nullptr) {
+            conv->reset();
+            firState = FirState::active;
+            unloadWanted.store(false, std::memory_order_relaxed);
+        }
+        if (firState == FirState::active && !p.firOn && !firMix.isSmoothing() && firMix.getCurrentValue() == 0.0f) {
+            dryFor += n;
+            if (dryFor >= idleAfter) { firState = FirState::draining; unloadWanted.store(true, std::memory_order_relaxed); }
+        } else {
+            dryFor = 0;
+        }
+        if (firState == FirState::draining && conv != nullptr && conv->getCurrentIRSize() <= 1)
+            firState = FirState::parked;
+        if (firState != FirState::parked && (p.firLoaded || p.firOn) && conv != nullptr && n <= int(wetBuf.size())) { // "on" implies "loaded"
             float* wet = wetBuf.data();
             std::copy(buf, buf + n, wet);
             float* chans[1] = { wet };
@@ -85,7 +108,7 @@ public:
             if (!firMix.isSmoothing() && firMix.getTargetValue() == 1.0f) std::copy(wet, wet + n, buf);
             else if (firMix.isSmoothing())
                 for (int i = 0; i < n; ++i) { const float m = firMix.getNextValue(); buf[i] += m * (wet[i] - buf[i]); }
-        } else {
+        } else if (firState != FirState::parked) {
             firMix.setCurrentAndTargetValue(0.0f);
         }
         // Pass 3: limiter → mute
@@ -111,6 +134,11 @@ public:
     // Same, for automatic measurements (separate hold so the UI meters don't steal it).
     float takeJobGainReductionDb() { return grJob.exchange(0.0f, std::memory_order_relaxed); }
     int lookaheadSamples() const { return limiter.lookaheadSamples(); }
+    // Control thread: true once (then false) when the FIR has been off long enough to unload.
+    bool takeFirUnloadRequest() { return unloadWanted.exchange(false, std::memory_order_relaxed); }
+    // Tests / diagnostics: the convolution is no longer being run.
+    bool firParked() const { return firState == FirState::parked; }
+    static constexpr double kFirIdleSeconds = 2.0;
 
 private:
     static constexpr int kRamp = 256;
@@ -125,6 +153,9 @@ private:
         limiter.prepare(sampleRate);
         gain.setCurrentAndTargetValue(0.0f);
         muteGain.setCurrentAndTargetValue(0.0f);
+        firState = FirState::active; // the new owner's FIR (loaded by the dispatcher) starts fresh
+        dryFor = 0;
+        unloadWanted.store(false, std::memory_order_relaxed);
     }
     uint32_t lastSlotGen = 0;
 
@@ -167,6 +198,10 @@ private:
     juce::dsp::Convolution* conv = nullptr;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> firMix;
     std::vector<float> wetBuf; // allocated in prepare
+    enum class FirState { active, draining, parked };
+    FirState firState = FirState::active;
+    int64_t dryFor = 0, idleAfter = 96000;
+    std::atomic<bool> unloadWanted { false };
 
     double sampleRate = 48000.0;
     DelayLine delay;

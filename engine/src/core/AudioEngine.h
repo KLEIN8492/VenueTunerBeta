@@ -47,6 +47,11 @@ public:
     void setParams(const Params& p) { ensureExtraAnalyzers(p.measure.numExtra); params.write(p); }
     // Any thread: the convolution swaps the IR in on its background thread and crossfades.
     void loadFir(int slot, juce::AudioBuffer<float>&& ir, double irSampleRate);
+    // Message thread: if this slot's FIR has been off long enough (OutputChain parks it), swap in
+    // a 1-sample pass-through IR so the big one is freed. True if it did: reload before re-use.
+    bool unloadFirIfIdle(int slot);
+    // Tests / diagnostics: the slot's convolution is no longer being run.
+    bool firParked(int slot) const { return slot >= 0 && slot < kMaxCh && chains[size_t(slot)].firParked(); }
     void setMuteAll(bool on) { muteAll.store(on); }
     void unmuteAfterFault() { faultMuted.store(false); }
     Status status(); // also resets peak holds

@@ -347,6 +347,7 @@ bool Dispatcher::loadFirFile(int o, const juce::String& path, juce::String& err)
     const int slot = slotOf[state.outputs[size_t(o)].id];
     engine.loadFir(slot, std::move(ir), fileSr);
     loadedFir[size_t(slot)] = path;
+    firUnloaded[size_t(slot)] = false;
     return true;
 }
 
@@ -355,7 +356,9 @@ void Dispatcher::syncFirs()
     assignSlots();
     for (size_t o = 0; o < state.outputs.size(); ++o) {
         auto& f = state.outputs[o].fir;
-        if (f.path.isEmpty() || f.path == loadedFir[size_t(slotOf[state.outputs[o].id])]) continue;
+        const size_t slot = size_t(slotOf[state.outputs[o].id]);
+        // An unloaded (off) FIR is only reloaded when it is switched back on.
+        if (f.path.isEmpty() || (f.path == loadedFir[slot] && !(firUnloaded[slot] && f.on))) continue;
         juce::String err;
         if (!loadFirFile(int(o), f.path, err)) {
             f.on = false;
@@ -432,6 +435,8 @@ void Dispatcher::finishCalibration(bool ok, double samples, const juce::String& 
 void Dispatcher::timerCallback()
 {
     if (sweepJob.active) tickSweep();
+    for (int slot = 0; slot < kMaxCh; ++slot) // FIRs switched off for a while: free their IR
+        if (engine.unloadFirIfIdle(slot)) firUnloaded[size_t(slot)] = true;
     // Level logger: asleep in this version (see core/Features.h). When enabled, one row per second.
     if constexpr (features::kLevelLogger) {
         if (++loggerTicks >= 4 && state.measure.micSource >= 0) {

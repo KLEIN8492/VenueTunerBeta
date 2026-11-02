@@ -114,6 +114,9 @@ private:
         ArrivalVote vote;
     } calib;
     std::array<juce::String, kMaxCh> loadedFir; // path currently in each slot's convolution
+    // Slot whose FIR was off long enough to be unloaded (pass-through IR in the convolution).
+    // The output keeps its path/taps (the UI still shows the file); it is reloaded when switched on.
+    std::array<bool, kMaxCh> firUnloaded {};
     std::map<int, int> slotOf;                 // output id -> engine slot
     std::array<uint32_t, kMaxCh> slotGen {};   // bumped when a slot changes owner
     void assignSlots();
