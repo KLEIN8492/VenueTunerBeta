@@ -11,7 +11,8 @@
 namespace vt {
 
 // One output's processing: gain·polarity → delay → IIR (PEQ, HP, LP, AP) → FIR → limiter → mute.
-// IIR/gain path: zero added latency. prepare() allocates; process() never does.
+// IIR/gain path: zero added latency. A limiter attack > 0 needs look-ahead (≤ 10 ms), borrowed
+// from the delay: total delay = max(delay, look-ahead). prepare() allocates; process() never does.
 // Coefficient changes ramp linearly over kRamp samples; interpolating (a1, a2) between two
 // stable filters stays stable because the biquad stability triangle is convex.
 class OutputChain
@@ -43,8 +44,10 @@ public:
         const float g = std::pow(10.0f, p.gainDb / 20.0f) * (p.polarityInvert ? -1.0f : 1.0f);
         gain.setTargetValue(g);
         muteGain.setTargetValue((p.mute || muteAll) ? 0.0f : 1.0f);
-        delay.setDelaySamples(int(std::lround(p.delayMs * 0.001 * sampleRate)));
+        // The limiter's look-ahead (attack > 0) holds the audio back by L samples; take them out
+        // of the output delay so the total stays max(delay, L) instead of delay + L.
         limiter.set(p.limThreshDb, p.limAttackMs, p.limReleaseMs, p.limiterOn);
+        delay.setDelaySamples(std::max(0, int(std::lround(p.delayMs * 0.001 * sampleRate)) - limiter.lookaheadSamples()));
 
         startRampIfChanged(p);
         if (rampLeft == 0)
@@ -107,6 +110,7 @@ public:
     float takeGainReductionDb() { return grHold.exchange(0.0f, std::memory_order_relaxed); }
     // Same, for automatic measurements (separate hold so the UI meters don't steal it).
     float takeJobGainReductionDb() { return grJob.exchange(0.0f, std::memory_order_relaxed); }
+    int lookaheadSamples() const { return limiter.lookaheadSamples(); }
 
 private:
     static constexpr int kRamp = 256;

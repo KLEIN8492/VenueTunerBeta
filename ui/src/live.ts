@@ -78,8 +78,13 @@ function renderLatency(el: HTMLElement, o: OutputConfig): void {
   const sr = st.sampleRate || 48000;
   const io = samplesToMs(st.ioLatency, sr);
   const fir = o.fir?.on ? samplesToMs(o.fir.latencySamples, sr) : 0;
+  // A limiter attack > 0 needs look-ahead (≤ 10 ms); the engine borrows it from the output
+  // delay, so only the part the delay doesn't cover adds latency (engine: Limiter.h).
+  const la = o.limiterOn && o.limAttackMs > 0 ? Math.min(o.limAttackMs, 10) : 0;
+  const extra = Math.max(0, la - o.delayMs);
   el.querySelector('[data-v="lat"]')!.textContent =
-    `latency ${(io + o.delayMs + fir).toFixed(2)} ms` + (fir ? ` (FIR ${fir.toFixed(2)})` : '');
+    `latency ${(io + o.delayMs + extra + fir).toFixed(2)} ms` + (fir ? ` (FIR ${fir.toFixed(2)})` : '') +
+    (extra > 0 ? ` (look-ahead ${extra.toFixed(2)})` : '');
 }
 
 const meterPct = (db: number) => Math.max(0, Math.min(100, ((db + 60) / 60) * 100));

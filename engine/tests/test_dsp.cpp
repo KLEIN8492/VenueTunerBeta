@@ -122,6 +122,96 @@ TEST_CASE("Limiter with zero attack never exceeds threshold")
     CHECK(lim.gainReductionDb() < -10.0f);
 }
 
+// The pre-look-ahead limiter, verbatim: attack = 0 must stay bit-identical to it.
+namespace {
+struct ReferenceLimiter
+{
+    float threshold, attackCoef, releaseCoef, gain = 1.0f;
+    ReferenceLimiter(float thrDb, float releaseMs, double sr)
+        : threshold(std::pow(10.0f, thrDb / 20.0f)), attackCoef(1.0f),
+          releaseCoef(1.0f - std::exp(-1.0f / (0.001f * releaseMs * float(sr)))) {}
+    float process(float x)
+    {
+        if (!std::isfinite(x)) return 0.0f;
+        const float a = std::abs(x);
+        const float want = a > threshold ? threshold / a : 1.0f;
+        gain += (want - gain) * (want < gain ? attackCoef : releaseCoef);
+        return x * gain;
+    }
+};
+}
+
+TEST_CASE("Limiter with zero attack is bit-identical to the zero-latency limiter")
+{
+    vt::Limiter lim;
+    lim.prepare(kSr);
+    lim.set(-6.0f, 0.0f, 50.0f, true);
+    ReferenceLimiter ref(-6.0f, 50.0f, kSr);
+    CHECK(lim.lookaheadSamples() == 0);
+    juce::Random rng(42);
+    for (int i = 0; i < 96000; ++i) {
+        const float env = (i / 4800) % 2 ? 3.0f : 0.2f; // bursts above and below the threshold
+        const float x = env * (2.0f * rng.nextFloat() - 1.0f);
+        const float a = lim.process(x), b = ref.process(x);
+        REQUIRE(a == b);
+    }
+}
+
+TEST_CASE("Limiter with 5 ms attack looks ahead: a step transient never exceeds the threshold")
+{
+    vt::Limiter lim;
+    lim.prepare(kSr);
+    lim.set(-6.0f, 5.0f, 50.0f, true);
+    const float thr = std::pow(10.0f, -6.0f / 20.0f);
+    const int la = lim.lookaheadSamples();
+    CHECK(la == 240); // 5 ms at 48 kHz
+
+    // Quiet sine, then an instant +24 dB step (worst case: no warning at all).
+    float maxOut = 0, maxEarly = 0;
+    std::vector<float> in(48000), out(48000);
+    for (int i = 0; i < 48000; ++i) {
+        const float amp = i < 12000 ? 0.1f : 1.6f;
+        in[size_t(i)] = amp * float(std::sin(2.0 * juce::MathConstants<double>::pi * 997.0 * i / kSr));
+        out[size_t(i)] = lim.process(in[size_t(i)]);
+        maxOut = std::max(maxOut, std::abs(out[size_t(i)]));
+        if (i < 12000 + la) maxEarly = std::max(maxEarly, std::abs(out[size_t(i)] - (i >= la ? in[size_t(i - la)] : 0.0f)));
+    }
+    CHECK(maxOut <= thr);              // never over, not even by a sample
+    CHECK(lim.safetyClips() == 0);     // ...because the look-ahead got there first, not the safety clip
+    CHECK(lim.gainReductionDb() < -9.0f);
+    // Below the threshold it is a pure L-sample delay; it starts reducing ahead of the step.
+    CHECK(maxEarly < 0.1f);
+}
+
+TEST_CASE("OutputChain borrows the limiter look-ahead from the output delay")
+{
+    auto arrival = [](float delayMs, float attackMs) {
+        vt::OutputChain chain;
+        chain.prepare(kSr, 512);
+        vt::OutputParams p {};
+        p.limiterOn = true;
+        p.limThreshDb = 0.0f;
+        p.limAttackMs = attackMs;
+        p.delayMs = delayMs;
+        std::vector<float> buf(512, 0.0f);
+        for (int b = 0; b < 40; ++b) { std::fill(buf.begin(), buf.end(), 0.0f); chain.process(p, buf.data(), 512, false); } // settle
+        std::vector<float> all;
+        for (int b = 0; b < 8; ++b) {
+            std::fill(buf.begin(), buf.end(), 0.0f);
+            if (b == 0) buf[0] = 0.5f; // below threshold: untouched, only delayed
+            chain.process(p, buf.data(), 512, false);
+            all.insert(all.end(), buf.begin(), buf.end());
+        }
+        int at = 0;
+        for (size_t i = 0; i < all.size(); ++i) if (std::abs(all[i]) > std::abs(all[size_t(at)])) at = int(i);
+        return at;
+    };
+    CHECK(arrival(0.0f, 0.0f) == 0);     // attack 0: zero latency
+    CHECK(arrival(0.0f, 5.0f) == 240);   // no output delay to borrow from: 5 ms of latency
+    CHECK(arrival(20.0f, 5.0f) == 960);  // 20 ms delay: look-ahead borrowed, total stays 20 ms
+    CHECK(arrival(0.0f, 50.0f) == 480);  // look-ahead capped at 10 ms
+}
+
 TEST_CASE("OutputChain gain, polarity and mute")
 {
     vt::OutputChain chain;
