@@ -375,3 +375,17 @@ TEST_CASE("Delay finder at lag 0: interpolates exactly like at any other lag")
     CHECK(r0.autoDelaySamples > 0.02); // a fraction was interpolated, not forced to 0
     CHECK_THAT(r0.autoDelaySamples, WithinAbs(r40.autoDelaySamples - 40.0, 1e-3));
 }
+
+TEST_CASE("Delay finder: sub-sample fraction is unbiased at and away from lag 0")
+{
+    // The fraction feeds the phase compensation in buildResult(): 0.2 samples off is ~16 deg at
+    // 10 kHz. A parabola through |ir| at a sinc-shaped peak pulls the estimate toward the integer
+    // (0.3 read 0.08, 0.7 read 0.92); only 0.5 came out right by symmetry.
+    const double delay = GENERATE(0.3, 0.7, 40.3);
+    vt::Analyzer an;
+    an.prepare(kSr);
+    const auto r = runNearZero(an, delay);
+    REQUIRE(r.delayValid);
+    CHECK_THAT(r.autoDelaySamples, WithinAbs(delay, 0.03));
+    CHECK_THAT(r.delaySamples, WithinAbs(delay, 0.03));
+}

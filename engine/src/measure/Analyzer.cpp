@@ -164,6 +164,7 @@ void Analyzer::findDelay()
     for (int k = 0; k <= M / 2; ++k) {
         const cfloat h = Y[k] * std::conj(X[k]) / float(std::norm(X[k]) + eps);
         Y[k] = h;
+        X[k] = h; // X is spent: keep H for the band-limited peak search below
         if (k > 0 && k < M / 2) Y[M - k] = std::conj(h);
     }
     delayFft.performRealOnlyInverseTransform(bigY.data());
@@ -192,16 +193,30 @@ void Analyzer::findDelay()
             if (held < 0 || std::abs(ir[k]) > std::abs(ir[held])) held = k;
         if (held >= 0 && std::abs(ir[held]) >= 0.8 * strongest) peak = held;
     }
-    const double pk = std::abs(ir[peak]);
 
-    // Left neighbour of lag 0 is index M-1: the deconvolution is linear (zero-padded to 2L), so
-    // the upper half of the buffer holds the negative lags and M-1 IS lag -1, not a wrapped
-    // unrelated sample. Keep it: dropping the parabola at lag 0 would read a 0.3-sample
-    // loopback as 0.0 (test_analyzer: "Delay finder at lag 0").
-    const double a = std::abs(ir[(peak - 1 + M) % M]), b = pk, c = std::abs(ir[peak + 1]);
-    const double denom = a - 2 * b + c;
-    const double frac = std::abs(denom) > 1e-12 ? 0.5 * (a - c) / denom : 0.0;
-    const double d = peak + std::clamp(frac, -0.5, 0.5);
+    // Sub-sample peak of the band-limited IR, ir(t) = (1/M) sum_k H[k] e^{j2pi k t/M}, evaluated
+    // exactly from H (in X). A parabola through |ir| fits a sinc lobe badly and pulls the fraction
+    // ~0.2 samples toward the integer. The sum is periodic in M, so left of lag 0 it reads the
+    // negative lags (index M-1 IS lag -1): the deconvolution is linear, zero-padded to 2L
+    // (test_analyzer: "Delay finder at lag 0").
+    const double sign = ir[peak] < 0 ? -1.0 : 1.0;
+    auto irAt = [&](double t) {
+        const double w = 2.0 * kPi * t / M;
+        const std::complex<double> step { std::cos(w), std::sin(w) };
+        std::complex<double> z = step, acc {};
+        for (int k = 1; k < M / 2; ++k, z *= step) acc += std::complex<double>(X[k]) * z;
+        return sign * (double(X[0].real()) + double(X[M / 2].real()) * std::cos(kPi * t) + 2.0 * acc.real());
+    };
+    // Golden-section search over +-0.75 samples: the true maximum is within half a sample of the
+    // strongest sample, and the first side lobe of a sinc is 1.43 samples out, so this is unimodal.
+    constexpr double g = 0.6180339887498949;
+    double lo = peak - 0.75, hi = peak + 0.75;
+    double t1 = hi - g * (hi - lo), t2 = lo + g * (hi - lo), f1 = irAt(t1), f2 = irAt(t2);
+    for (int it = 0; it < 24; ++it) { // width 1.5 * 0.618^24 ~ 1e-5 samples
+        if (f1 < f2) { lo = t1; t1 = t2; f1 = f2; t2 = lo + g * (hi - lo); f2 = irAt(t2); }
+        else         { hi = t2; t2 = t1; f2 = f1; t1 = hi - g * (hi - lo); f1 = irAt(t1); }
+    }
+    const double d = peak + std::clamp(0.5 * (lo + hi) - peak, -0.5, 0.5);
     autoDelay.store(d);
 
     if (lockOn.load()) { // the user's delay rules: keep the alignment, only refresh the IR view
