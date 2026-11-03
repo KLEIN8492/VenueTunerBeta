@@ -4,3 +4,5 @@ ui/dist/
 .DS_Store
 engine/build-universal/
 app/dist/
+engine/build-win/
+engine/build-linux/

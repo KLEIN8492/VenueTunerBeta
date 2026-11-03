@@ -11,7 +11,8 @@
 namespace vt {
 
 // One output's processing: gain·polarity → delay → IIR (PEQ, HP, LP, AP) → FIR → limiter → mute.
-// IIR/gain path: zero added latency. prepare() allocates; process() never does.
+// IIR/gain path: zero added latency. A limiter attack > 0 needs look-ahead (≤ 10 ms), borrowed
+// from the delay: total delay = max(delay, look-ahead). prepare() allocates; process() never does.
 // Coefficient changes ramp linearly over kRamp samples; interpolating (a1, a2) between two
 // stable filters stays stable because the biquad stability triangle is convex.
 class OutputChain
@@ -28,6 +29,10 @@ public:
         muteGain.setCurrentAndTargetValue(0.0f);
         firMix.reset(sr, 0.03);
         firMix.setCurrentAndTargetValue(0.0f);
+        firState = FirState::active;
+        dryFor = 0;
+        idleAfter = int64_t(kFirIdleSeconds * sr);
+        unloadWanted.store(false);
         wetBuf.assign(size_t(std::max(maxBlock, 1)), 0.0f);
         for (int k = 0; k < kMaxIir; ++k) { cur[k] = target[k] = Biquad::identity(); state[k].reset(); }
         rampLeft = 0;
@@ -43,8 +48,10 @@ public:
         const float g = std::pow(10.0f, p.gainDb / 20.0f) * (p.polarityInvert ? -1.0f : 1.0f);
         gain.setTargetValue(g);
         muteGain.setTargetValue((p.mute || muteAll) ? 0.0f : 1.0f);
-        delay.setDelaySamples(int(std::lround(p.delayMs * 0.001 * sampleRate)));
+        // The limiter's look-ahead (attack > 0) holds the audio back by L samples; take them out
+        // of the output delay so the total stays max(delay, L) instead of delay + L.
         limiter.set(p.limThreshDb, p.limAttackMs, p.limReleaseMs, p.limiterOn);
+        delay.setDelaySamples(std::max(0, int(std::lround(p.delayMs * 0.001 * sampleRate)) - limiter.lookaheadSamples()));
 
         startRampIfChanged(p);
         if (rampLeft == 0)
@@ -70,10 +77,29 @@ public:
             }
             buf[i] = float(y);
         }
-        // Pass 2: FIR. While an IR is loaded the convolution always runs, so switching it on
-        // or off is a 30 ms dry/wet crossfade rather than a jump into a cold convolution.
+        // Pass 2: FIR. While an IR is loaded and in use, the convolution always runs, so switching
+        // it on or off is a 30 ms dry/wet crossfade rather than a jump into a cold convolution.
+        // Off and settled dry for kFirIdleSeconds, it parks: the chain asks the control thread to
+        // swap in a 1-sample pass-through IR (frees the big one on the convolution's background
+        // thread), keeps running until that swap has landed, then stops calling the convolution
+        // at all (64 silent convolutions are real CPU). Back on: reset the stale history and
+        // crossfade in as usual; the pass-through IR makes wet == dry until the real IR is reloaded,
+        // and the convolution crossfades to it by itself.
         firMix.setTargetValue(p.firOn ? 1.0f : 0.0f);
-        if ((p.firLoaded || p.firOn) && conv != nullptr && n <= int(wetBuf.size())) { // "on" implies "loaded"
+        if (p.firOn && firState != FirState::active && conv != nullptr) {
+            conv->reset();
+            firState = FirState::active;
+            unloadWanted.store(false, std::memory_order_relaxed);
+        }
+        if (firState == FirState::active && !p.firOn && !firMix.isSmoothing() && firMix.getCurrentValue() == 0.0f) {
+            dryFor += n;
+            if (dryFor >= idleAfter) { firState = FirState::draining; unloadWanted.store(true, std::memory_order_relaxed); }
+        } else {
+            dryFor = 0;
+        }
+        if (firState == FirState::draining && conv != nullptr && conv->getCurrentIRSize() <= 1)
+            firState = FirState::parked;
+        if (firState != FirState::parked && (p.firLoaded || p.firOn) && conv != nullptr && n <= int(wetBuf.size())) { // "on" implies "loaded"
             float* wet = wetBuf.data();
             std::copy(buf, buf + n, wet);
             float* chans[1] = { wet };
@@ -82,7 +108,7 @@ public:
             if (!firMix.isSmoothing() && firMix.getTargetValue() == 1.0f) std::copy(wet, wet + n, buf);
             else if (firMix.isSmoothing())
                 for (int i = 0; i < n; ++i) { const float m = firMix.getNextValue(); buf[i] += m * (wet[i] - buf[i]); }
-        } else {
+        } else if (firState != FirState::parked) {
             firMix.setCurrentAndTargetValue(0.0f);
         }
         // Pass 3: limiter → mute
@@ -107,6 +133,12 @@ public:
     float takeGainReductionDb() { return grHold.exchange(0.0f, std::memory_order_relaxed); }
     // Same, for automatic measurements (separate hold so the UI meters don't steal it).
     float takeJobGainReductionDb() { return grJob.exchange(0.0f, std::memory_order_relaxed); }
+    int lookaheadSamples() const { return limiter.lookaheadSamples(); }
+    // Control thread: true once (then false) when the FIR has been off long enough to unload.
+    bool takeFirUnloadRequest() { return unloadWanted.exchange(false, std::memory_order_relaxed); }
+    // Tests / diagnostics: the convolution is no longer being run.
+    bool firParked() const { return firState == FirState::parked; }
+    static constexpr double kFirIdleSeconds = 2.0;
 
 private:
     static constexpr int kRamp = 256;
@@ -121,6 +153,9 @@ private:
         limiter.prepare(sampleRate);
         gain.setCurrentAndTargetValue(0.0f);
         muteGain.setCurrentAndTargetValue(0.0f);
+        firState = FirState::active; // the new owner's FIR (loaded by the dispatcher) starts fresh
+        dryFor = 0;
+        unloadWanted.store(false, std::memory_order_relaxed);
     }
     uint32_t lastSlotGen = 0;
 
@@ -163,6 +198,10 @@ private:
     juce::dsp::Convolution* conv = nullptr;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> firMix;
     std::vector<float> wetBuf; // allocated in prepare
+    enum class FirState { active, draining, parked };
+    FirState firState = FirState::active;
+    int64_t dryFor = 0, idleAfter = 96000;
+    std::atomic<bool> unloadWanted { false };
 
     double sampleRate = 48000.0;
     DelayLine delay;

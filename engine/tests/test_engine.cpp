@@ -211,3 +211,85 @@ TEST_CASE("Several mics are measured at the same time against one reference")
     CHECK_THAT(a.magDb[100], WithinAbs(0.0, 0.3));
     CHECK_THAT(bRes.magDb[100], WithinAbs(-6.02, 0.3));
 }
+
+namespace {
+// Largest sample-to-sample step of output 0 over `blocks` blocks, with the given params.
+float maxStep(Harness& h, const vt::Params& p, int blocks, float& prev)
+{
+    h.engine.setParams(p);
+    float worst = 0.0f;
+    for (int b = 0; b < blocks; ++b) {
+        h.run(1);
+        for (float x : h.out[0]) { worst = std::max(worst, std::abs(x - prev)); prev = x; }
+    }
+    return worst;
+}
+
+// A 10 s sweep on output 0 at -12 dBFS RMS: 0.5 s in, it is a ~28 Hz sine of amplitude 0.36,
+// whose own sample-to-sample step is ~0.0013. A hard cut there would step by up to 0.36.
+vt::Params sweepParams(Harness& h, uint32_t id, float levelDb)
+{
+    h.state.gen.on = true;
+    h.state.gen.levelDb = levelDb;
+    h.state.gen.targets = { 0 };
+    h.state.outputs[0].limiterOn = false;
+    auto p = vt::toParams(h.state);
+    p.gen.mode = vt::GeneratorParams::Sweep;
+    p.gen.sweepId = id;
+    p.gen.sweepLength = 480000;
+    return p;
+}
+}
+
+TEST_CASE("Generator: re-triggering a sweep mid-stream fades out and in instead of cutting")
+{
+    Harness h;
+    h.engine.unmuteAfterFault();
+    float prev = 0.0f;
+    const float steady = maxStep(h, sweepParams(h, 1, -12.0f), 375, prev); // 0.5 s into the sweep
+    CHECK(steady < 0.003f);
+    const float onRetrigger = maxStep(h, sweepParams(h, 2, -12.0f), 50, prev); // new sweepId
+    CHECK(onRetrigger < 0.003f); // 10 ms fade: 0.36 / 480 per sample at most, + the sine itself
+}
+
+TEST_CASE("Generator: a sweep level change ramps instead of jumping")
+{
+    Harness h;
+    h.engine.unmuteAfterFault();
+    float prev = 0.0f;
+    maxStep(h, sweepParams(h, 1, -12.0f), 375, prev);
+    const float onLevel = maxStep(h, sweepParams(h, 1, -30.0f), 50, prev);
+    CHECK(onLevel < 0.003f);
+}
+
+TEST_CASE("Generator: pink noise fades out before a sweep starts (no instant cut)")
+{
+    // Two identical engines play the same (deterministic) pink noise; one is then asked for a
+    // sweep. Their sample ratio is exactly the switch fade: it must glide 1 → 0 over ~10 ms.
+    Harness a, b;
+    for (Harness* h : { &a, &b }) {
+        h->state.gen.on = true;
+        h->state.gen.levelDb = -12.0f;
+        h->state.gen.targets = { 0 };
+        h->state.outputs[0].limiterOn = false;
+        h->apply();
+        h->engine.unmuteAfterFault();
+        h->run(1500); // pink fully faded in
+    }
+    auto p = sweepParams(b, 1, -12.0f);
+    p.gen.sweepLength = 48000;
+    b.engine.setParams(p);
+    std::vector<float> ratio;
+    for (int blk = 0; blk < 7; ++blk) { // 448 samples: inside the 480-sample fade
+        a.run(1);
+        b.run(1);
+        for (int i = 0; i < Harness::kBlock; ++i)
+            ratio.push_back(std::abs(a.out[0][size_t(i)]) > 1e-3f ? b.out[0][size_t(i)] / a.out[0][size_t(i)] : std::nanf(""));
+    }
+    auto near = [&](int at) { for (int k = at; k < at + 32; ++k) if (std::isfinite(ratio[size_t(k)])) return ratio[size_t(k)]; return -1.0f; };
+    CHECK(near(0) > 0.97f);                         // not cut on the spot
+    CHECK_THAT(near(240), WithinAbs(0.5, 0.08));    // halfway through the 10 ms fade
+    CHECK(near(410) < 0.2f);
+    float last = 2.0f;
+    for (float r : ratio) if (std::isfinite(r)) { CHECK(r <= last + 1e-4f); last = r; } // monotonic
+}

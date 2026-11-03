@@ -7,6 +7,7 @@ import { EqEditor } from './lib/eqeditor';
 import { Channels } from './lib/channels';
 import { loadPrefs, readingName, fmt, limitState, throttled, openCalibration } from './lib/spl';
 import type { OutputConfig, Status, SystemState } from './lib/types';
+import { addKey, keys } from './lib/platform';
 
 const engine = connectFromLocation();
 installUndo(engine);
@@ -48,7 +49,7 @@ function renderStrips(s: SystemState): void {
   const shape = s.outputs.map((o) => o.colour).join(',');
   const root = $('strips');
   if (shape !== builtFor) {
-    root.innerHTML = s.outputs.map(stripHtml).join('') || '<div class="dim" style="padding:10px">No outputs yet: create them in Settings › Outputs (⌘,)</div>';
+    root.innerHTML = s.outputs.map(stripHtml).join('') || '<div class="dim" style="padding:10px">No outputs yet: create them in Settings › Outputs (' + keys('⌘,') + ')</div>';
     builtFor = shape;
   }
   s.outputs.forEach((o, i) => {
@@ -77,8 +78,13 @@ function renderLatency(el: HTMLElement, o: OutputConfig): void {
   const sr = st.sampleRate || 48000;
   const io = samplesToMs(st.ioLatency, sr);
   const fir = o.fir?.on ? samplesToMs(o.fir.latencySamples, sr) : 0;
+  // A limiter attack > 0 needs look-ahead (≤ 10 ms); the engine borrows it from the output
+  // delay, so only the part the delay doesn't cover adds latency (engine: Limiter.h).
+  const la = o.limiterOn && o.limAttackMs > 0 ? Math.min(o.limAttackMs, 10) : 0;
+  const extra = Math.max(0, la - o.delayMs);
   el.querySelector('[data-v="lat"]')!.textContent =
-    `latency ${(io + o.delayMs + fir).toFixed(2)} ms` + (fir ? ` (FIR ${fir.toFixed(2)})` : '');
+    `latency ${(io + o.delayMs + extra + fir).toFixed(2)} ms` + (fir ? ` (FIR ${fir.toFixed(2)})` : '') +
+    (extra > 0 ? ` (look-ahead ${extra.toFixed(2)})` : '');
 }
 
 const meterPct = (db: number) => Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
@@ -108,7 +114,7 @@ $('strips').addEventListener('click', (e) => {
   if (!strip || !engine.state) return;
   const i = Number(strip.dataset.i);
   if (el.closest('[data-sel]')) {
-    if (!e.metaKey && !e.shiftKey) selected.clear();
+    if (!addKey(e) && !e.shiftKey) selected.clear();
     if (selected.has(i) && selected.size > 1) selected.delete(i); else selected.add(i);
     editor.setOutput(i);
     renderStrips(engine.state);
@@ -297,7 +303,7 @@ $('redoBtn').onclick = () => void engine.request('history.redo').catch(() => und
 engine.on('status', (st) => {
   ($('undoBtn') as HTMLButtonElement).disabled = !st.canUndo;
   ($('redoBtn') as HTMLButtonElement).disabled = !st.canRedo;
-  $('undoBtn').title = `Undo (⌘Z) · ${st.canUndo} step${st.canUndo === 1 ? '' : 's'}`;
+  $('undoBtn').title = `Undo (${keys('⌘Z')}) · ${st.canUndo} step${st.canUndo === 1 ? '' : 's'}`;
 });
 
 // ---------------------------------------------------------------- air compensation
@@ -316,3 +322,9 @@ $('airOn').onchange = (e) => report(engine.patch('air/enabled', (e.target as HTM
 $('airT').onchange = (e) => report(engine.patch('air/tempC', Number((e.target as HTMLInputElement).value)));
 $('airH').onchange = (e) => report(engine.patch('air/humidity', Number((e.target as HTMLInputElement).value)));
 $('airRef').onclick = () => { if (confirm('Store the current temperature and humidity as the conditions the system was tuned in?')) report(engine.request('air.setReference')); };
+
+// Shortcut hints in the static HTML: ⌘ on macOS, Ctrl elsewhere.
+for (const el of document.querySelectorAll<HTMLElement>('[data-keys]')) {
+  if (el.title) el.title = keys(el.title);
+  if (el.dataset.keys === 'text') el.textContent = keys(el.textContent ?? '');
+}

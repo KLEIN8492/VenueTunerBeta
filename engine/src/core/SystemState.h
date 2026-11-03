@@ -146,7 +146,7 @@ struct SystemState
     void removeOutput(int index);
 };
 
-constexpr float kGeneratorMaxDb = -12.0f; // dBFS RMS hard cap (pink crest ~12 dB)
+constexpr float kGeneratorMaxDb = -12.0f; // dBFS RMS hard cap: pink crest is ~11.9 dB, so peaks stay < 0 dBFS
 
 juce::var toVar(const SystemState&);
 juce::var outputsToVar(const std::vector<OutputConfig>&);

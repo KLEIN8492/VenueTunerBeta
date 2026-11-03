@@ -66,7 +66,9 @@ export class Engine {
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private listeners = new Map<keyof Events, Listener<never>[]>();
 
-  constructor(private url: string) { this.connect(); }
+  // `token` resolves the session token presented in the handshake (?token=…); the engine closes
+  // connections without it (code 4001, see engine/src/server/Server.h).
+  constructor(private url: string, private token: () => Promise<string | null> = async () => null) { this.connect(); }
 
   on<K extends keyof Events>(event: K, cb: Listener<Events[K]>): void {
     if (!this.listeners.has(event)) this.listeners.set(event, []);
@@ -103,7 +105,14 @@ export class Engine {
 
   private connect(): void {
     const gen = ++this.connGen;
-    const ws = new WebSocket(this.url);
+    void this.token().catch(() => null).then((t) => {
+      if (gen !== this.connGen) return;
+      this.open(gen, t ? `${this.url}/?token=${encodeURIComponent(t)}` : this.url);
+    });
+  }
+
+  private open(gen: number, url: string): void {
+    const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     ws.onopen = () => {
@@ -111,8 +120,9 @@ export class Engine {
       this.connected = true;
       this.emit('open', undefined);
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       if (gen !== this.connGen) return;
+      if (e.code === 4001) console.warn('engine refused the session token');
       const was = this.connected;
       this.connected = false;
       this.failPending('engine disconnected');
@@ -150,5 +160,8 @@ export function connectFromLocation(): Engine {
   const port = params.get('port') ?? '47800';
   const web = location.protocol === 'http:' || location.protocol === 'https:';
   const host = web && location.hostname ? location.hostname : '127.0.0.1';
-  return new Engine(`ws://${host}:${port}`);
+  // Electron: the token comes from the shell over IPC (preload). A plain browser passes ?token=.
+  const bridge = window.vt;
+  const token = bridge?.sessionToken ? () => bridge.sessionToken!() : async () => params.get('token');
+  return new Engine(`ws://${host}:${port}`, token);
 }

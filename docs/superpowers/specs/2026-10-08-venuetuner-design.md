@@ -250,6 +250,16 @@ engine remains the source of truth for audio.
 ## 8. Engine ↔ UI protocol
 
 - WebSocket on localhost (configurable port; LAN later).
+- **Session token (required, do not remove).** The port controls a PA (mute, generator level,
+  routing), so connecting is not enough to drive it. The desktop shell (`app/main.js`) creates a
+  32-byte random token per launch with `crypto.randomBytes`, writes it as the first line of the
+  engine's stdin (`--token-stdin`: never argv or environment, which other processes can read) and
+  hands it to the windows over IPC (`app/preload.js` → `window.vt.sessionToken()`). Clients connect
+  to `ws://127.0.0.1:<port>/?token=<token>`; the engine checks it in the opening handshake, logs a
+  rejected attempt and closes with code **4001** without sending state, events or spectra. The
+  shell only attaches to an already-running engine if that engine accepts its token. An engine
+  started by hand without `--token-stdin` accepts every local client and prints a warning
+  (development and tests only).
 - **JSON messages** for commands and state: `state.get`, `state.patch` (JSON-Patch-like
   path + value), `snapshot.save/recall/list/delete`, `generator.set`,
   `measure.start/stop/capture`, `calibrate.latency`, `mute.all`.

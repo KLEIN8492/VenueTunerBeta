@@ -1,19 +1,35 @@
 // VenueTuner desktop shell: supervises the headless engine and hosts the windows.
 //   Measurement ⌘1 · Live/Tuning ⌘2 · Settings ⌘,
-const { app, BrowserWindow, Menu, dialog, net, protocol, screen, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, screen, systemPreferences } = require('electron');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const nodeNet = require('node:net');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { probeEngine } = require('./engineprobe');
 
 const PORT = Number(process.env.VT_PORT || 47800);
 // Packaged app: engine and UI live in Contents/Resources. Development: in the repo.
 const ROOT = path.resolve(__dirname, '..');
 const UI_DIST = app.isPackaged ? path.join(process.resourcesPath, 'ui') : path.join(ROOT, 'ui', 'dist');
+const ENGINE_FILE = process.platform === 'win32' ? 'VenueTunerEngine.exe' : 'VenueTunerEngine';
 const ENGINE = process.env.VT_ENGINE
-  || (app.isPackaged ? path.join(process.resourcesPath, 'engine', 'VenueTunerEngine') : path.join(ROOT, 'engine', 'build', 'VenueTunerEngine'));
+  || (app.isPackaged ? path.join(process.resourcesPath, 'engine', ENGINE_FILE) : devEngine());
+
+// Development: the engine from the platform's build folder (MSVC puts it under Release/).
+function devEngine() {
+  const tries = [path.join(ROOT, 'engine', 'build', ENGINE_FILE), path.join(ROOT, 'engine', 'build', 'Release', ENGINE_FILE)];
+  return tries.find((p) => fs.existsSync(p)) || tries[0];
+}
 const DATA_DIR = process.env.VT_DATA_DIR || path.join(app.getPath('appData'), 'VenueTuner');
+
+// Session token: the engine's port controls a PA, so only this shell's windows may drive it.
+// Fresh per launch, never in argv or the environment (other processes can read both): the
+// engine gets it on stdin (--token-stdin), the windows ask for it over IPC (preload.js), and
+// both present it as ?token= in the WebSocket handshake. See engine/src/server/Server.h.
+const TOKEN = crypto.randomBytes(32).toString('hex');
+ipcMain.handle('vt-token', (e) => (e.senderFrame && e.senderFrame.url.startsWith('app://') ? TOKEN : null));
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -32,14 +48,32 @@ function portOpen() {
   });
 }
 
+let attached = false, portBusySince = 0;
+
 async function ensureEngine() {
   if (quitting || engine) return;
   if (await portOpen()) {
-    // An engine is already running (e.g. the UI was restarted): attach, keep audio going.
-    console.log(`[shell] attaching to running engine on :${PORT}`);
-    setTimeout(ensureEngine, 2000);
+    // Something listens on the engine port. Attach (keep audio going) only if it is an engine
+    // that accepts this launch's session token; never drive or wait on a foreign process.
+    const verdict = await probeEngine(PORT, TOKEN);
+    if (verdict === 'ours') {
+      if (!attached) console.log(`[shell] attached to running engine on :${PORT}`);
+      attached = true;
+      portBusySince = 0;
+      setTimeout(ensureEngine, 2000); // watch it; start our own if it goes away
+      return;
+    }
+    // An engine from a previous launch may still be saving and exiting: give it a few seconds.
+    if (!portBusySince) portBusySince = Date.now();
+    if (Date.now() - portBusySince < 6000) { setTimeout(ensureEngine, 1000); return; }
+    console.log(`[shell] port ${PORT} is held by ${verdict === 'refused' ? 'another VenueTuner engine' : 'another program'}`);
+    dialog.showErrorBox('VenueTuner engine',
+      `Port ${PORT} is already in use by ${verdict === 'refused' ? 'another VenueTuner engine (another copy of the app?)' : 'another program'}.\n\n`
+      + 'VenueTuner will not connect to it. Quit the other program (or the other copy of VenueTuner), then relaunch.');
     return;
   }
+  attached = false;
+  portBusySince = 0;
   const now = Date.now();
   while (restarts.length && now - restarts[0] > 60_000) restarts.shift();
   if (restarts.length >= 5) {
@@ -52,7 +86,9 @@ async function ensureEngine() {
   }
   restarts.push(now);
   console.log(`[shell] starting engine ${ENGINE}`);
-  engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // stdin stays open as a lifeline: closing it asks the engine to save and quit (works on Windows too).
+  engine = spawn(ENGINE, ['--port', String(PORT), '--data-dir', DATA_DIR, '--token-stdin', '--quit-on-stdin-eof'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  engine.stdin.write(`${TOKEN}\n`); // first stdin line = session token; stdin then stays open as the quit lifeline
   engine.stdout.on('data', (d) => process.stdout.write(`[engine] ${d}`));
   engine.stderr.on('data', (d) => process.stderr.write(`[engine] ${d}`));
   engine.on('error', (e) => {
@@ -71,7 +107,8 @@ function stopEngine() {
     const child = engine;
     const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 2000);
     child.once('exit', () => { clearTimeout(timer); resolve(); });
-    child.kill('SIGTERM'); // engine autosaves on SIGTERM
+    child.stdin.end(); // engine autosaves and exits (all platforms)
+    if (process.platform !== 'win32') child.kill('SIGTERM'); // on Windows kill() would terminate without saving
   });
 }
 

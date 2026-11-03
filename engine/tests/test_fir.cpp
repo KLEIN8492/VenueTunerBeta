@@ -153,3 +153,62 @@ TEST_CASE("FIR on/off crossfades instead of jumping")
     CHECK_THAT(run(100, &jump), WithinAbs(1.0, 1e-3));
     CHECK(jump < 0.01f);
 }
+
+TEST_CASE("FIR off for a while: convolution is unloaded and parked, back on crossfades in")
+{
+    juce::dsp::ConvolutionMessageQueue queue;
+    juce::dsp::Convolution conv(juce::dsp::Convolution::NonUniform { 256 }, queue);
+    vt::OutputChain chain;
+    chain.setConvolution(&conv);
+    chain.prepare(48000, 4096);
+    vt::OutputParams p {};
+    p.limiterOn = false;
+    p.firLoaded = true;
+    p.firOn = false;
+    auto loadIr = [&](float gain, int taps) {
+        juce::AudioBuffer<float> ir(1, taps);
+        ir.clear();
+        ir.setSample(0, 0, gain);
+        conv.loadImpulseResponse(std::move(ir), 48000, juce::dsp::Convolution::Stereo::no,
+                                 juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::no);
+    };
+    std::vector<float> buf(64);
+    float last = 1.0f;
+    auto run = [&](int blocks, float* maxJump = nullptr) {
+        for (int b = 0; b < blocks; ++b) {
+            std::fill(buf.begin(), buf.end(), 1.0f);
+            chain.process(p, buf.data(), 64, false);
+            for (float y : buf) { if (maxJump) *maxJump = std::max(*maxJump, std::abs(y - last)); last = y; }
+        }
+        return last;
+    };
+    loadIr(0.25f, 32); // wet = −12 dB copy of dry
+    for (int i = 0; i < 2000 && conv.getCurrentIRSize() != 32; ++i) { run(1); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    REQUIRE(conv.getCurrentIRSize() == 32);
+
+    // Off: no unload request until it has been dry for kFirIdleSeconds.
+    run(int(1.5 * 48000 / 64));
+    CHECK_FALSE(chain.takeFirUnloadRequest());
+    run(int(0.6 * 48000 / 64));
+    REQUIRE(chain.takeFirUnloadRequest());
+    CHECK_FALSE(chain.takeFirUnloadRequest()); // once
+
+    // Control thread swaps in the pass-through IR; the chain runs until it lands, then parks.
+    loadIr(1.0f, 1);
+    for (int i = 0; i < 2000 && !chain.firParked(); ++i) { run(1); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    REQUIRE(chain.firParked());
+    CHECK_THAT(run(10), WithinAbs(1.0, 1e-6)); // still dry, convolution not called
+
+    // Back on: no jump (wet == dry through the pass-through IR), then the real IR is reloaded
+    // (the dispatcher does this) and the convolution crossfades to it.
+    p.firOn = true;
+    float jump = 0;
+    CHECK_THAT(run(20, &jump), WithinAbs(1.0, 1e-3));
+    CHECK(jump < 0.01f);
+    CHECK_FALSE(chain.firParked());
+    loadIr(0.25f, 32);
+    jump = 0;
+    for (int i = 0; i < 2000 && conv.getCurrentIRSize() != 32; ++i) { run(1, &jump); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    CHECK_THAT(run(200, &jump), WithinAbs(0.25, 1e-3));
+    CHECK(jump < 0.01f); // the convolution's own 50 ms IR crossfade
+}

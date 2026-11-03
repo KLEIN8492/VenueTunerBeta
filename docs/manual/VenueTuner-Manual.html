@@ -123,8 +123,8 @@
 <h2 id="need"><span class="n">2</span>What you need</h2>
 <table>
   <tr><th>Item</th><th>Recommendation</th></tr>
-  <tr><td>Mac</td><td>macOS 13 Ventura or later, Apple Silicon or Intel. A dedicated machine is best for shows.</td></tr>
-  <tr><td>Audio interface</td><td>A wired USB or Thunderbolt interface (Core Audio, class compliant). Enough inputs for the console feed(s) and measurement mic(s), enough outputs for your speaker feeds. Network audio (Dante, AVB) is not supported in this version.</td></tr>
+  <tr><td>Computer</td><td><b>Mac</b>: macOS 13 Ventura or later, Apple Silicon or Intel. <b>Windows</b>: 10 or 11, 64-bit. <b>Linux</b>: 64-bit x86, Ubuntu 22.04 / Debian 12 or newer. A dedicated machine is best for shows.</td></tr>
+  <tr><td>Audio interface</td><td>A wired USB or Thunderbolt interface (Core Audio on Mac; on Windows the interface's ASIO driver or Windows Audio/WASAPI; on Linux ALSA or JACK/PipeWire). Enough inputs for the console feed(s) and measurement mic(s), enough outputs for your speaker feeds. Network audio (Dante, AVB) is not supported in this version.</td></tr>
   <tr><td>Measurement mic</td><td>An omnidirectional measurement microphone with 48 V phantom power, ideally with its calibration file. Optional: an acoustic calibrator (94 dB) for accurate SPL.</td></tr>
   <tr><td>Cables</td><td>Console outputs → interface inputs; interface outputs → amplifiers or powered speakers. Optional: a short cable from one output to one input to calibrate the interface latency.</td></tr>
 </table>
@@ -142,6 +142,18 @@ They work for trying the software, but Apple's processing adds about 45 ms of la
     </ul></li>
   <li>When macOS asks for <b>microphone access</b>, allow it. Without it the measurement inputs stay silent.</li>
 </ol>
+<h3>Windows</h3>
+<ol class="steps">
+  <li>Run <code>VenueTuner-Setup-0.1.0.exe</code>, or unzip <code>VenueTuner-0.1.0-win.zip</code> anywhere and run <b>VenueTuner.exe</b> (nothing is installed then).</li>
+  <li>"Windows protected your PC": the app isn't signed with a paid certificate. Click <b>More info → Run anyway</b>, once.</li>
+  <li>Audio: choose <b>Windows Audio</b> (WASAPI) in Settings › Audio and set the interface to 48 kHz in the Windows sound settings. This test build has no ASIO; builds made on a Windows PC with the ASIO SDK list your interface's ASIO driver, which gives the lowest latency.</li>
+</ol>
+<h3>Linux</h3>
+<ol class="steps">
+  <li><code>chmod +x VenueTuner-0.1.0.AppImage</code> then run it (Ubuntu 22.04+ may need <code>sudo apt install libfuse2</code>). Or unpack the <code>.tar.gz</code> and run <code>venuetuner</code>.</li>
+  <li>Audio: ALSA works directly (close other apps using the interface); JACK or PipeWire-JACK is used when running. For dropout-free low latency: <code>sudo usermod -aG audio $USER</code>, then log out and in.</li>
+</ol>
+<p>On Windows and Linux, read <kbd>Ctrl</kbd> wherever this manual says <kbd>⌘</kbd>. Settings live in <code>%APPDATA%\VenueTuner</code> (Windows) or <code>~/.config/VenueTuner</code> (Linux).</p>
 <p>Two windows open: <b>Measurement</b> (top) and <b>Live</b> (bottom). <b>Settings</b> opens with <kbd>⌘</kbd><kbd>,</kbd>. The windows remember their position.</p>
 
 <h2 id="quick"><span class="n">4</span>Quick start: tune a system in 15 steps</h2>
@@ -236,7 +248,7 @@ VenueTuner always starts with <b>all outputs muted</b>, and they stay muted unti
 <ul>
   <li><b>Sound level</b>, <b>Mic gain vs reference</b>: see <a href="#spl">section 10</a>.</li>
   <li><b>View</b>: <i>Transfer fn</i> or <i>RTA</i> (real-time spectrum of the mic in 1/3 or 1/6 octave; works on music, no generator needed).</li>
-  <li><b>Generator</b>: pink noise on the selected outputs; level in dBFS RMS (maximum −12).</li>
+  <li><b>Generator</b>: pink noise on the selected outputs; level in dBFS RMS (maximum −12). The noise is built like Smaart's <i>pseudorandom</i> pink: a 2<sup>19</sup>-sample period (~11 s at 48 kHz) played in a loop, band-limited 10 Hz – 22.4 kHz (nothing wasted below the subs' range, no DC), crest factor ~12 dB, so peaks stay under 0 dBFS even at −12 dBFS RMS. At the top of the range the output limiter may just touch the peaks; −20 to −15 dBFS is plenty with a good mic gain.</li>
   <li><b>Mic / Reference</b>: the main measurement mic; the reference is the internal loopback (the generator signal, interface latency compensated) or a physical input.</li>
   <li><b>Average</b> (frames), <b>Smoothing</b> (magnitude, none to 1/3 octave), <b>Phase sm.</b> (phase, separate, default 1/48 octave: keep it fine while the magnitude is smoothed for EQ), <b>FFT</b>: <i>multi-time-window</i> (long windows in the lows, short in the highs, which hides late reflections) or <i>fixed 16k</i>.</li>
   <li><b>Log sweep</b> (<kbd>S</kbd>): a 1–8 s sweep for a high-resolution measurement and the room's reverberation. It uses the same frequency points and time windows as the live measurement, so a sweep and pink noise of the same speaker read the same; its coherence comes from the signal-to-noise ratio. If a limiter worked during the sweep you are told to lower the level and sweep again.</li>

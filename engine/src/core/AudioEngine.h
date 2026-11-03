@@ -2,7 +2,7 @@
 #include "core/Params.h"
 #include "core/SystemState.h"
 #include "dsp/OutputChain.h"
-#include "dsp/PinkNoise.h"
+#include "dsp/PinkPeriodic.h"
 #include "dsp/SweepGen.h"
 #include "measure/Analyzer.h"
 #include "measure/MicMeters.h"
@@ -47,6 +47,11 @@ public:
     void setParams(const Params& p) { ensureExtraAnalyzers(p.measure.numExtra); params.write(p); }
     // Any thread: the convolution swaps the IR in on its background thread and crossfades.
     void loadFir(int slot, juce::AudioBuffer<float>&& ir, double irSampleRate);
+    // Message thread: if this slot's FIR has been off long enough (OutputChain parks it), swap in
+    // a 1-sample pass-through IR so the big one is freed. True if it did: reload before re-use.
+    bool unloadFirIfIdle(int slot);
+    // Tests / diagnostics: the slot's convolution is no longer being run.
+    bool firParked(int slot) const { return slot >= 0 && slot < kMaxCh && chains[size_t(slot)].firParked(); }
     void setMuteAll(bool on) { muteAll.store(on); }
     void unmuteAfterFault() { faultMuted.store(false); }
     Status status(); // also resets peak holds
@@ -106,12 +111,16 @@ private:
     std::array<OutputChain, kMaxCh> chains;
     juce::dsp::ConvolutionMessageQueue convQueue;
     std::array<std::unique_ptr<juce::dsp::Convolution>, kMaxCh> convs;
-    PinkNoise pink;
+    PinkPeriodic pink; // pseudorandom, band-limited, ~12 dB crest (like Smaart's generator)
     SweepGen sweep;
     int64_t sweepPos = 0;
     uint32_t lastSweepId = 0;
     double currentSr = 48000.0;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> genGain;
+    // Source switches (pink ↔ sweep, a re-triggered sweep) go through silence: genSwitch fades
+    // to 0 in 10 ms, the source changes, then it fades back in. sweepGain ramps level edits.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> genSwitch, sweepGain;
+    bool genSweeping = false;
     std::vector<float> genBuf, mixBuf, zeroBuf;
     std::atomic<bool> muteAll { false }, faultMuted { true };
     std::atomic<int> xruns { 0 };

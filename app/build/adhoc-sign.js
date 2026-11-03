@@ -1,4 +1,4 @@
-// electron-builder afterPack hook: ad-hoc sign the final universal app (Apple Silicon refuses
+// electron-builder afterPack hook (macOS only; Windows/Linux return at once): ad-hoc sign the final universal app (Apple Silicon refuses
 // unsigned apps). Runs before the dmg/zip are created. Without an Apple Developer ID the app
 // is not notarized: first launch on another Mac is right-click → Open.
 const { execFileSync } = require('node:child_process');
